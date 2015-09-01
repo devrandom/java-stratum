@@ -1,0 +1,1 @@
+java -jar target/stratum-protocol-1.0-SNAPSHOT.jar electrum.be:50002
