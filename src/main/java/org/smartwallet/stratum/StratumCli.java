@@ -30,14 +30,13 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 /**
  * Created by devrandom on 2015-Aug-30.
  */
 public class StratumCli {
+    public static final int CALL_TIMEOUT = 5000;
     private StratumClient client;
     private AeshConsole console;
     private ObjectMapper mapper;
@@ -68,6 +67,7 @@ public class StratumCli {
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
                 .command(new VersionCommand())
+                .command(new BannerCommand())
                 .command(new HelpCommand())
                 .command(new SubscribeAddressCommand())
                 .command(new SubscribeHeadersCommand())
@@ -108,20 +108,40 @@ public class StratumCli {
     public class VersionCommand implements Command {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
-            ListenableFuture<StratumMessage> future = client.call("server.version", Lists.newArrayList());
-            Futures.addCallback(future, new FutureCallback<StratumMessage>() {
-                @Override
-                public void onSuccess(StratumMessage result) {
-                    System.out.print("result: ");
-                    System.out.println(formatResult(result));
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    System.out.println("failed.");
-                }
-            });
+            simpleCall("server.version");
             return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="banner", description = "get server banner")
+    public class BannerCommand implements Command {
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            simpleCall("server.banner");
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    private void simpleCall(String method) throws IOException {
+        ListenableFuture<StratumMessage> future = client.call(method, Lists.newArrayList());
+        Futures.addCallback(future, new FutureCallback<StratumMessage>() {
+            @Override
+            public void onSuccess(StratumMessage result) {
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                System.out.println("failed.");
+            }
+        });
+        try {
+            StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+            System.out.print("result: ");
+            System.out.println(result.result);
+        } catch (InterruptedException | ExecutionException e) {
+            // ignore, handled by callback
+        } catch (TimeoutException e) {
+            System.out.println("timeout");
         }
     }
 
@@ -170,18 +190,7 @@ public class StratumCli {
                     }
                 });
             }
-            Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
-                @Override
-                public void onSuccess(StratumMessage result) {
-                    System.out.print("initial headers state: ");
-                    System.out.println(formatResult(result));
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    System.out.println("failed.");
-                }
-            });
+            handleSubscriptionResult(subscription);
             return CommandResult.SUCCESS;
         }
     }
@@ -214,19 +223,30 @@ public class StratumCli {
                     }
                 });
             }
-            Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
-                @Override
-                public void onSuccess(StratumMessage result) {
-                    System.out.print("initial address state: ");
-                    System.out.println(formatResult(result));
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    System.out.println("failed.");
-                }
-            });
+            handleSubscriptionResult(subscription);
             return CommandResult.SUCCESS;
+        }
+    }
+
+    private void handleSubscriptionResult(StratumSubscription subscription) {
+        Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
+            @Override
+            public void onSuccess(StratumMessage result) {
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                System.out.println("failed.");
+            }
+        });
+        try {
+            StratumMessage result = subscription.future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+            System.out.print("initial state: ");
+            System.out.println(formatResult(result));
+        } catch (InterruptedException | ExecutionException e) {
+            // ignore, handled by callback
+        } catch (TimeoutException e) {
+            System.out.println("timeout");
         }
     }
 }
