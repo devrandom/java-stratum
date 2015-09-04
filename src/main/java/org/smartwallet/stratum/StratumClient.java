@@ -204,21 +204,22 @@ public class StratumClient extends AbstractExecutionThreadService {
         return future;
     }
 
-    public BlockingQueue<StratumMessage> subscribe(String method, List<Object> params) throws IOException {
+    public StratumSubscription subscribe(String method, List<Object> params) throws IOException {
         StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params);
+        SettableFuture<StratumMessage> future = SettableFuture.create();
         try {
             lock.lock();
             if (!isRunning()) {
-                ArrayBlockingQueue<StratumMessage> queue = makeSubscriptionQueue();
-                queue.offer(StratumMessage.SENTINEL);
-                return queue;
+                return null;
             }
             if (!subscriptions.containsKey(method)) {
                 subscriptions.put(method, makeSubscriptionQueue());
             }
+            calls.put(message.id, future);
             logger.info("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
-            return subscriptions.get(method);
+            outputStream.write('\n');
+            return new StratumSubscription(future, subscriptions.get(method));
         } finally {
             lock.unlock();
         }

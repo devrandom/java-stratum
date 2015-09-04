@@ -30,6 +30,9 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Created by devrandom on 2015-Aug-30.
@@ -38,6 +41,10 @@ public class StratumCli {
     private StratumClient client;
     private AeshConsole console;
     private ObjectMapper mapper;
+    private BlockingQueue<StratumMessage> addressChangeQueue;
+    private ExecutorService addressChangeService;
+    private BlockingQueue<StratumMessage> headersChangeQueue;
+    private ExecutorService headersChangeService;
 
     public static void main(String[] args) throws IOException {
         if (args.length != 1) {
@@ -143,7 +150,38 @@ public class StratumCli {
     public class SubscribeHeadersCommand implements Command {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
-            client.subscribe("blockchain.headers.subscribe", Lists.newArrayList());
+            StratumSubscription subscription = client.subscribe("blockchain.headers.subscribe", Lists.newArrayList());
+            headersChangeQueue = subscription.queue;
+            if (headersChangeService == null) {
+                headersChangeService = Executors.newSingleThreadExecutor();
+                headersChangeService.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        while (true) {
+                            try {
+                                StratumMessage item = headersChangeQueue.take();
+                                if (item.isSentinel())
+                                    break;
+                                System.out.println(mapper.writeValueAsString(item));
+                            } catch (InterruptedException | JsonProcessingException e) {
+                                throw Throwables.propagate(e);
+                            }
+                        }
+                    }
+                });
+            }
+            Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
+                @Override
+                public void onSuccess(StratumMessage result) {
+                    System.out.print("initial headers state: ");
+                    System.out.println(formatResult(result));
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    System.out.println("failed.");
+                }
+            });
             return CommandResult.SUCCESS;
         }
     }
@@ -156,7 +194,38 @@ public class StratumCli {
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             List<Object> params = Lists.newArrayList();
             params.addAll(addresses);
-            client.subscribe("blockchain.address.subscribe", params);
+            StratumSubscription subscription = client.subscribe("blockchain.address.subscribe", params);
+            addressChangeQueue = subscription.queue;
+            if (addressChangeService == null) {
+                addressChangeService = Executors.newSingleThreadExecutor();
+                addressChangeService.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        while (true) {
+                            try {
+                                StratumMessage item = addressChangeQueue.take();
+                                if (item.isSentinel())
+                                    break;
+                                System.out.println(mapper.writeValueAsString(item));
+                            } catch (InterruptedException | JsonProcessingException e) {
+                                throw Throwables.propagate(e);
+                            }
+                        }
+                    }
+                });
+            }
+            Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
+                @Override
+                public void onSuccess(StratumMessage result) {
+                    System.out.print("initial address state: ");
+                    System.out.println(formatResult(result));
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    System.out.println("failed.");
+                }
+            });
             return CommandResult.SUCCESS;
         }
     }

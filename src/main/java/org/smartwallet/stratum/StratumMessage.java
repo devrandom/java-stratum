@@ -1,6 +1,7 @@
 package org.smartwallet.stratum;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
@@ -8,6 +9,7 @@ import java.util.List;
 /**
  * Created by devrandom on 2015-Aug-25.
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class StratumMessage {
     public Long id;
 
@@ -20,6 +22,8 @@ public class StratumMessage {
     /** Result - for result */
     @JsonProperty("result")
     public Object result;
+
+    public String error;
 
     public static final StratumMessage SENTINEL = new StratumMessage(null, null, null);
 
