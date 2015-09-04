@@ -179,6 +179,8 @@ public class StratumClient extends AbstractExecutionThreadService {
                 handleResult(message);
             else if (message.isMessage())
                 handleMessage(message);
+            else if (message.isError())
+                handleError(message);
             else {
                 logger.warn("unknown message type");
             }
@@ -248,6 +250,15 @@ public class StratumClient extends AbstractExecutionThreadService {
         } catch (InterruptedException e) {
             logger.warn("interrupted while handling message {}", message.method);
         }
+    }
+
+    private void handleError(StratumMessage message) {
+        SettableFuture<StratumMessage> future = calls.remove(message.id);
+        if (future == null) {
+            logger.warn("reply for unknown id {}", message.id);
+            return;
+        }
+        future.setException(new StratumException(message.error));
     }
 
     protected void handleFatal(Exception e) {

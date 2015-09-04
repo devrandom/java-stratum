@@ -66,6 +66,11 @@ public class StratumCli {
         client.startAsync();
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
+                .command(new HeaderCommand())
+                .command(new HistoryCommand())
+                .command(new BalanceCommand())
+                .command(new GetTransactionCommand())
+                .command(new UnspentCommand())
                 .command(new VersionCommand())
                 .command(new BannerCommand())
                 .command(new HelpCommand())
@@ -81,6 +86,7 @@ public class StratumCli {
                     public void handleInterrupt(Console console, Action action) {
                         if (action == Action.EOF) {
                             console.stop();
+                            cleanup();
                         }
                     }
                 })
@@ -99,9 +105,18 @@ public class StratumCli {
     public class ExitCommand implements Command {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
-            commandInvocation.stop();
+            stop(commandInvocation);
             return CommandResult.SUCCESS;
         }
+    }
+
+    private void stop(CommandInvocation commandInvocation) {
+        commandInvocation.stop();
+        cleanup();
+    }
+
+    private void cleanup() {
+        client.stopAsync();
     }
 
     @CommandDefinition(name="version", description = "get server version")
@@ -122,24 +137,129 @@ public class StratumCli {
         }
     }
 
+    @CommandDefinition(name="history", description = "get address history")
+    public class HistoryCommand implements Command {
+        @Arguments(description = "addresses")
+        List<String> addresses;
+
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            List<Object> params = Lists.newArrayList();
+            params.addAll(addresses);
+            ListenableFuture<StratumMessage> future = client.call("blockchain.address.get_history", params);
+            try {
+                StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+                System.out.print("result: ");
+                System.out.println(formatResult(result));
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("failed");
+            } catch (TimeoutException e) {
+                System.out.println("timeout");
+            }
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="balance", description = "get address balance")
+    public class BalanceCommand implements Command {
+        @Arguments(description = "addresses")
+        List<String> addresses;
+
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            List<Object> params = Lists.newArrayList();
+            params.addAll(addresses);
+            ListenableFuture<StratumMessage> future = client.call("blockchain.address.get_balance", params);
+            try {
+                StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+                System.out.print("result: ");
+                System.out.println(formatResult(result));
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("failed");
+            } catch (TimeoutException e) {
+                System.out.println("timeout");
+            }
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="unspent", description = "list address unspent")
+    public class UnspentCommand implements Command {
+        @Arguments(description = "addresses")
+        List<String> addresses;
+
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            List<Object> params = Lists.newArrayList();
+            params.addAll(addresses);
+            ListenableFuture<StratumMessage> future = client.call("blockchain.address.listunspent", params);
+            try {
+                StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+                System.out.print("result: ");
+                System.out.println(formatResult(result));
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("failed");
+            } catch (TimeoutException e) {
+                System.out.println("timeout");
+            }
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="header", description = "get block header")
+    public class HeaderCommand implements Command {
+        @Arguments(description = "hashes")
+        List<String> hashes;
+
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            List<Object> params = Lists.newArrayList();
+            params.addAll(hashes);
+            ListenableFuture<StratumMessage> future = client.call("blockchain.block.get_header", params);
+            try {
+                StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+                System.out.print("result: ");
+                System.out.println(formatResult(result));
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("failed");
+            } catch (TimeoutException e) {
+                System.out.println("timeout");
+            }
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="transaction", description = "get transaction")
+    public class GetTransactionCommand implements Command {
+        @Arguments(description = "hashes")
+        List<String> hashes;
+
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            List<Object> params = Lists.newArrayList();
+            params.addAll(hashes);
+            ListenableFuture<StratumMessage> future = client.call("blockchain.transaction.get", params);
+            try {
+                StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+                System.out.print("result: ");
+                System.out.println(result.result);
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("failed");
+            } catch (TimeoutException e) {
+                System.out.println("timeout");
+            }
+            return CommandResult.SUCCESS;
+        }
+    }
+
     private void simpleCall(String method) throws IOException {
         ListenableFuture<StratumMessage> future = client.call(method, Lists.newArrayList());
-        Futures.addCallback(future, new FutureCallback<StratumMessage>() {
-            @Override
-            public void onSuccess(StratumMessage result) {
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                System.out.println("failed.");
-            }
-        });
         try {
             StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
             System.out.print("result: ");
             System.out.println(result.result);
         } catch (InterruptedException | ExecutionException e) {
-            // ignore, handled by callback
+            System.err.println("failed");
         } catch (TimeoutException e) {
             System.out.println("timeout");
         }
@@ -180,8 +300,10 @@ public class StratumCli {
                         while (true) {
                             try {
                                 StratumMessage item = headersChangeQueue.take();
-                                if (item.isSentinel())
+                                if (item.isSentinel()) {
+                                    headersChangeService.shutdown();
                                     break;
+                                }
                                 System.out.println(mapper.writeValueAsString(item));
                             } catch (InterruptedException | JsonProcessingException e) {
                                 throw Throwables.propagate(e);
@@ -213,8 +335,10 @@ public class StratumCli {
                         while (true) {
                             try {
                                 StratumMessage item = addressChangeQueue.take();
-                                if (item.isSentinel())
+                                if (item.isSentinel()) {
+                                    addressChangeService.shutdown();
                                     break;
+                                }
                                 System.out.println(mapper.writeValueAsString(item));
                             } catch (InterruptedException | JsonProcessingException e) {
                                 throw Throwables.propagate(e);

@@ -51,4 +51,9 @@ public class StratumMessage {
     public boolean isSentinel() {
         return this == SENTINEL;
     }
+
+    @JsonIgnore
+    public boolean isError() {
+        return id != null && error != null;
+    }
 }
