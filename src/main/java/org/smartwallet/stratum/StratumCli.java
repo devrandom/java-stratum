@@ -149,12 +149,12 @@ public class StratumCli {
             ListenableFuture<StratumMessage> future = client.call("blockchain.address.get_history", params);
             try {
                 StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-                System.out.print("result: ");
-                System.out.println(formatResult(result));
+                print("result: ");
+                println(formatResult(result));
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("failed");
+                printerr("failed %s\n", e);
             } catch (TimeoutException e) {
-                System.out.println("timeout");
+                printerrln("timeout");
             }
             return CommandResult.SUCCESS;
         }
@@ -172,12 +172,12 @@ public class StratumCli {
             ListenableFuture<StratumMessage> future = client.call("blockchain.address.get_balance", params);
             try {
                 StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-                System.out.print("result: ");
-                System.out.println(formatResult(result));
+                print("result: ");
+                println(formatResult(result));
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("failed");
+                printerr("failed %s\n", e);
             } catch (TimeoutException e) {
-                System.out.println("timeout");
+                printerrln("timeout");
             }
             return CommandResult.SUCCESS;
         }
@@ -195,12 +195,12 @@ public class StratumCli {
             ListenableFuture<StratumMessage> future = client.call("blockchain.address.listunspent", params);
             try {
                 StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-                System.out.print("result: ");
-                System.out.println(formatResult(result));
+                print("result: ");
+                println(formatResult(result));
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("failed");
+                printerr("failed %s\n", e);
             } catch (TimeoutException e) {
-                System.out.println("timeout");
+                printerrln("timeout");
             }
             return CommandResult.SUCCESS;
         }
@@ -218,12 +218,12 @@ public class StratumCli {
             ListenableFuture<StratumMessage> future = client.call("blockchain.block.get_header", params);
             try {
                 StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-                System.out.print("result: ");
-                System.out.println(formatResult(result));
+                print("result: ");
+                println(formatResult(result));
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("failed");
+                printerr("failed %s\n", e);
             } catch (TimeoutException e) {
-                System.out.println("timeout");
+                printerrln("timeout");
             }
             return CommandResult.SUCCESS;
         }
@@ -241,27 +241,44 @@ public class StratumCli {
             ListenableFuture<StratumMessage> future = client.call("blockchain.transaction.get", params);
             try {
                 StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-                System.out.print("result: ");
-                System.out.println(result.result);
+                print("result: ");
+                Object result1 = result.result;
+                println(result1);
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("failed");
+                printerr("failed %s\n", e);
             } catch (TimeoutException e) {
-                System.out.println("timeout");
+                printerrln("timeout");
             }
             return CommandResult.SUCCESS;
         }
+    }
+
+    private void println(Object item) {
+        console.getShell().out().println(item);
+    }
+
+    private void printerrln(Object item) {
+        console.getShell().err().println(item);
+    }
+
+    private void printerr(String format, Throwable ex) {
+        console.getShell().err().printf(format, ex.getCause().getMessage());
+    }
+
+    private void print(Object item) {
+        console.getShell().out().print(item);
     }
 
     private void simpleCall(String method) throws IOException {
         ListenableFuture<StratumMessage> future = client.call(method, Lists.newArrayList());
         try {
             StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-            System.out.print("result: ");
-            System.out.println(result.result);
+            print("result: ");
+            println(result.result);
         } catch (InterruptedException | ExecutionException e) {
-            System.err.println("failed");
+            printerr("failed %s\n", e);
         } catch (TimeoutException e) {
-            System.out.println("timeout");
+            printerrln("timeout");
         }
     }
 
@@ -278,9 +295,9 @@ public class StratumCli {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             for (String cmd : console.getCommandRegistry().getAllCommandNames()) {
-                System.out.println(cmd);
-                System.out.print(console.getHelpInfo(cmd));
-                System.out.println("------");
+                println(cmd);
+                print(console.getHelpInfo(cmd));
+                println("------");
             }
             return CommandResult.SUCCESS;
         }
@@ -304,7 +321,7 @@ public class StratumCli {
                                     headersChangeService.shutdown();
                                     break;
                                 }
-                                System.out.println(mapper.writeValueAsString(item));
+                                println(mapper.writeValueAsString(item));
                             } catch (InterruptedException | JsonProcessingException e) {
                                 throw Throwables.propagate(e);
                             }
@@ -339,7 +356,7 @@ public class StratumCli {
                                     addressChangeService.shutdown();
                                     break;
                                 }
-                                System.out.println(mapper.writeValueAsString(item));
+                                println(mapper.writeValueAsString(item));
                             } catch (InterruptedException | JsonProcessingException e) {
                                 throw Throwables.propagate(e);
                             }
@@ -360,17 +377,17 @@ public class StratumCli {
 
             @Override
             public void onFailure(Throwable t) {
-                System.out.println("failed.");
+                printerr("failed %s\n", t);
             }
         });
         try {
             StratumMessage result = subscription.future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-            System.out.print("initial state: ");
-            System.out.println(formatResult(result));
+            print("initial state: ");
+            println(formatResult(result));
         } catch (InterruptedException | ExecutionException e) {
             // ignore, handled by callback
         } catch (TimeoutException e) {
-            System.out.println("timeout");
+            printerrln("timeout");
         }
     }
 }

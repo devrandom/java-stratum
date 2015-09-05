@@ -23,6 +23,7 @@ public class StratumMessage {
     @JsonProperty("result")
     public Object result;
 
+    @JsonProperty("error")
     public String error;
 
     public static final StratumMessage SENTINEL = new StratumMessage(null, null, null);

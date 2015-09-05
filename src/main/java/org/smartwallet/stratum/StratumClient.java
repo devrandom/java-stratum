@@ -159,7 +159,7 @@ public class StratumClient extends AbstractExecutionThreadService {
             String line;
             try {
                 line = reader.readLine();
-                logger.info("< {}", line);
+                logger.debug("< {}", line);
             } catch (IOException e) {
                 handleFatal(e);
                 return;
@@ -197,7 +197,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                 return future;
             }
             calls.put(message.id, future);
-            logger.info("> {}", mapper.writeValueAsString(message));
+            logger.debug("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
             outputStream.write('\n');
         } finally {
