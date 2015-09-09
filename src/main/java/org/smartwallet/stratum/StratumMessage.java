@@ -3,6 +3,9 @@ package org.smartwallet.stratum;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.Lists;
 
 import java.util.List;
 
@@ -17,25 +20,34 @@ public class StratumMessage {
     public String method;
 
     /** Parameters - for calls */
-    public List<Object> params;
+    public List<JsonNode> params;
 
     /** Result - for result */
     @JsonProperty("result")
-    public Object result;
+    public JsonNode result;
 
     @JsonProperty("error")
     public String error;
 
-    public static final StratumMessage SENTINEL = new StratumMessage(null, null, null);
+    public static final StratumMessage SENTINEL = new StratumMessage();
 
     public StratumMessage() {
     }
 
     @JsonIgnore
-    public StratumMessage(Long id, String method, List<Object> params) {
+    public StratumMessage(Long id, String method, List<Object> params, ObjectMapper mapper) {
         this.id = id;
         this.method = method;
-        this.params = params;
+        this.params = Lists.newArrayList();
+        for (Object param : params) {
+            this.params.add(mapper.valueToTree(param));
+        }
+    }
+
+    @JsonIgnore
+    public StratumMessage(Long id, JsonNode result) {
+        this.id = id;
+        this.result = result;
     }
 
     @JsonIgnore

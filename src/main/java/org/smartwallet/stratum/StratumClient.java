@@ -1,6 +1,9 @@
 package org.smartwallet.stratum;
 
+import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
@@ -187,41 +190,50 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
     }
 
-    public ListenableFuture<StratumMessage> call(String method, List<Object> params) throws IOException {
-        StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params);
-        SettableFuture<StratumMessage> future = SettableFuture.create();
+    public ListenableFuture<StratumMessage> call(String method, String param) {
+        return call(method, Lists.<Object>newArrayList(param));
+    }
+    
+    public ListenableFuture<StratumMessage> call(String method, List<Object> params) {
+        StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
         try {
             lock.lock();
-            if (!isRunning()) {
-                future.setException(new EOFException("shutting down"));
-                return future;
-            }
+            if (!isRunning())
+                return null;
+            SettableFuture<StratumMessage> future = SettableFuture.create();
             calls.put(message.id, future);
             logger.debug("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
             outputStream.write('\n');
+            return future;
+        } catch (IOException e) {
+            return Futures.immediateFailedFuture(e);
         } finally {
             lock.unlock();
         }
-        return future;
     }
 
-    public StratumSubscription subscribe(String method, List<Object> params) throws IOException {
-        StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params);
-        SettableFuture<StratumMessage> future = SettableFuture.create();
+    public StratumSubscription subscribe(String method, String param) {
+        return subscribe(method, Lists.<Object>newArrayList(param));
+    }
+    
+    public StratumSubscription subscribe(String method, List<Object> params) {
+        StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
         try {
             lock.lock();
-            if (!isRunning()) {
+            if (!isRunning())
                 return null;
-            }
             if (!subscriptions.containsKey(method)) {
                 subscriptions.put(method, makeSubscriptionQueue());
             }
+            SettableFuture<StratumMessage> future = SettableFuture.create();
             calls.put(message.id, future);
             logger.info("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
             outputStream.write('\n');
             return new StratumSubscription(future, subscriptions.get(method));
+        } catch (IOException e) {
+            return new StratumSubscription(Futures.<StratumMessage>immediateFailedFuture(e), subscriptions.get(method));
         } finally {
             lock.unlock();
         }
