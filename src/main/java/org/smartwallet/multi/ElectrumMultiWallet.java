@@ -196,7 +196,7 @@ public class ElectrumMultiWallet implements MultiWallet {
         }
         
         for (Address address : addresses) {
-            addressQueue = client.subscribe("blockchain.address.subscribe", address.toString()).queue;
+            addressQueue = client.subscribe(address).queue;
             listenToAddressQueue();
         }
     }

@@ -1,5 +1,9 @@
 package org.smartwallet.stratum;
 
+import org.bitcoinj.core.Address;
+import org.bitcoinj.core.AddressFormatException;
+import org.bitcoinj.core.NetworkParameters;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
@@ -9,12 +13,15 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.jboss.aesh.cl.Arguments;
 import org.jboss.aesh.cl.CommandDefinition;
+import org.jboss.aesh.cl.converter.Converter;
+import org.jboss.aesh.cl.validator.OptionValidatorException;
 import org.jboss.aesh.console.AeshConsole;
 import org.jboss.aesh.console.AeshConsoleBuilder;
 import org.jboss.aesh.console.Console;
 import org.jboss.aesh.console.Prompt;
 import org.jboss.aesh.console.command.Command;
 import org.jboss.aesh.console.command.CommandResult;
+import org.jboss.aesh.console.command.converter.ConverterInvocation;
 import org.jboss.aesh.console.command.invocation.CommandInvocation;
 import org.jboss.aesh.console.command.registry.AeshCommandRegistryBuilder;
 import org.jboss.aesh.console.command.registry.CommandRegistry;
@@ -37,6 +44,7 @@ import java.util.concurrent.*;
  */
 public class StratumCli {
     public static final int CALL_TIMEOUT = 5000;
+    public static NetworkParameters params;
     private StratumClient client;
     private AeshConsole console;
     private ObjectMapper mapper;
@@ -46,6 +54,7 @@ public class StratumCli {
     private ExecutorService headersChangeService;
 
     public static void main(String[] args) throws IOException {
+        params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
         if (args.length != 1) {
             System.err.println("Usage: StratumCli HOST:PORT");
             System.exit(1);
@@ -63,9 +72,10 @@ public class StratumCli {
     private void run(String host, int port) {
         mapper = new ObjectMapper();
         client = new StratumClient(new InetSocketAddress(host, port), true);
-        client.startAsync();
+        //client.startAsync();
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
+                .command(new ConnectCommand())
                 .command(new HeaderCommand())
                 .command(new HistoryCommand())
                 .command(new BalanceCommand())
@@ -106,6 +116,15 @@ public class StratumCli {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             stop(commandInvocation);
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="connect", description = "connect to server")
+    public class ConnectCommand implements Command {
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            client.startAsync();
             return CommandResult.SUCCESS;
         }
     }
@@ -307,7 +326,7 @@ public class StratumCli {
     public class SubscribeHeadersCommand implements Command {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
-            StratumSubscription subscription = client.subscribe("blockchain.headers.subscribe", Lists.newArrayList());
+            StratumSubscription subscription = client.subscribeToHeaders();
             headersChangeQueue = subscription.queue;
             if (headersChangeService == null) {
                 headersChangeService = Executors.newSingleThreadExecutor();
@@ -334,15 +353,20 @@ public class StratumCli {
         }
     }
 
-    @CommandDefinition(name="subscribe_address", description = "subscribe to headers")
+    @CommandDefinition(name="subscribe_address", description = "subscribe to address")
     public class SubscribeAddressCommand implements Command {
-        @Arguments(description = "addresses")
-        List<String> addresses;
+        @Arguments(description = "address", converter = AddressConverter.class)
+        List<Address> addresses;
+        
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
-            List<Object> params = Lists.newArrayList();
-            params.addAll(addresses);
-            StratumSubscription subscription = client.subscribe("blockchain.address.subscribe", params);
+            StratumSubscription subscription = null;
+            for (Address address : addresses) {
+                subscription = client.subscribe(address);
+                handleSubscriptionResult(subscription);
+            }
+            if (subscription == null)
+                return CommandResult.SUCCESS;
             addressChangeQueue = subscription.queue;
             if (addressChangeService == null) {
                 addressChangeService = Executors.newSingleThreadExecutor();
@@ -364,7 +388,6 @@ public class StratumCli {
                     }
                 });
             }
-            handleSubscriptionResult(subscription);
             return CommandResult.SUCCESS;
         }
     }
@@ -388,6 +411,17 @@ public class StratumCli {
             // ignore, handled by callback
         } catch (TimeoutException e) {
             printerrln("timeout");
+        }
+    }
+
+    private static class AddressConverter implements Converter<Address, ConverterInvocation> {
+        @Override
+        public Address convert(ConverterInvocation converterInvocation) throws OptionValidatorException {
+            try {
+                return new Address(params, converterInvocation.getInput());
+            } catch (AddressFormatException e) {
+                throw new OptionValidatorException("invalid address");
+            }
         }
     }
 }

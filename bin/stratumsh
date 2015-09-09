@@ -1,1 +1,5 @@
-java -jar target/stratum-protocol-1.0-SNAPSHOT.jar electrum.be:50002
+#!/bin/bash
+
+#java -jar target/stratum-protocol-1.0-SNAPSHOT.jar electrum.be:50002
+#java -jar target/stratum-protocol-1.0-SNAPSHOT.jar electrum.litecoiners.nl:50002
+java -jar target/stratum-protocol-1.0-SNAPSHOT.jar electrum.hoodquarters.com:50002

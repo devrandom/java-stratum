@@ -1,14 +1,14 @@
 package org.smartwallet.stratum;
 
+import org.bitcoinj.core.Address;
+
 import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Queues;
+import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,7 +24,7 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -47,16 +47,19 @@ public class StratumClient extends AbstractExecutionThreadService {
     protected BufferedReader reader;
     private boolean isTls;
     private AtomicLong currentId;
+    private Map<Address, Long> subscribedAddresses;
+    private long subscribedHeaders = 0;
 
     public StratumClient(InetSocketAddress address, boolean isTls) {
         serverAddresses = Lists.newArrayList(address);
         mapper = new ObjectMapper();
         mapper.configure(JsonGenerator.Feature.AUTO_CLOSE_TARGET, false);
-        currentId = new AtomicLong();
+        currentId = new AtomicLong(1000);
         calls = Maps.newConcurrentMap();
         subscriptions = Maps.newConcurrentMap();
         lock = lockFactory.newReentrantLock("StratumClient-stream");
         this.isTls = isTls;
+        subscribedAddresses = Maps.newConcurrentMap();
     }
 
     @Override
@@ -158,6 +161,31 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     @Override
     protected void run() {
+        lock.lock();
+
+        Futures.addCallback(call("server.version", "StratumClient 0.1"), new FutureCallback<StratumMessage>() {
+            @Override
+            public void onSuccess(StratumMessage result) {
+                logger.info("server version {}", result.result);
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                logger.error("could not get server version");
+            }
+        });
+        try {
+            for (Map.Entry<Address, Long> entry : subscribedAddresses.entrySet()) {
+                writeMessage("blockchain.address.subscribe", entry.getKey().toString(), entry.getValue());
+            }
+
+            if (subscribedHeaders > 0) {
+                writeMessage("blockchain.address.subscribe", null, subscribedHeaders);
+            }
+        } finally {
+            lock.unlock();
+        }
+
         while (true) {
             String line;
             try {
@@ -213,29 +241,44 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
     }
 
-    public StratumSubscription subscribe(String method, String param) {
-        return subscribe(method, Lists.<Object>newArrayList(param));
+    public StratumSubscription subscribe(Address address) {
+        long id = currentId.getAndIncrement();
+        subscribedAddresses.put(address, id);
+        return subscribe("blockchain.address.subscribe", address.toString(), id);
     }
-    
-    public StratumSubscription subscribe(String method, List<Object> params) {
-        StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
+
+    public StratumSubscription subscribeToHeaders() {
+        long id = currentId.getAndIncrement();
+        subscribedHeaders = id;
+        return subscribe("blockchain.headers.subscribe", null, id);
+    }
+
+    protected StratumSubscription subscribe(String method, String param, long id) {
         try {
             lock.lock();
-            if (!isRunning())
-                return null;
             if (!subscriptions.containsKey(method)) {
                 subscriptions.put(method, makeSubscriptionQueue());
             }
             SettableFuture<StratumMessage> future = SettableFuture.create();
-            calls.put(message.id, future);
+            calls.put(id, future);
+            if (isRunning())
+                writeMessage(method, param, id);
+            return new StratumSubscription(future, subscriptions.get(method));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void writeMessage(String method, String param, long id) {
+        ArrayList<Object> params = (param != null) ? Lists.<Object>newArrayList(param) : Lists.<Object>newArrayList();
+        StratumMessage message = new StratumMessage(id, method, params, mapper);
+        try {
             logger.info("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
             outputStream.write('\n');
-            return new StratumSubscription(future, subscriptions.get(method));
         } catch (IOException e) {
-            return new StratumSubscription(Futures.<StratumMessage>immediateFailedFuture(e), subscriptions.get(method));
-        } finally {
-            lock.unlock();
+            logger.error("failed to write");
+            // TODO close
         }
     }
 

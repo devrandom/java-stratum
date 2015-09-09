@@ -94,7 +94,7 @@ public class ElectrumMultiWalletTest {
         SettableFuture<StratumMessage> future = SettableFuture.create();
         BlockingQueue<StratumMessage> queue = Queues.newArrayBlockingQueue(1);
         StratumSubscription subscription = new StratumSubscription(future, queue);
-        expect(client.subscribe(eq("blockchain.address.subscribe"), anyString()))
+        expect(client.subscribe(isA(Address.class)))
                 .andReturn(subscription).times(26); // (10 + 3) * 2
         replay(client);
         multiWallet.subscribeToKeys();
