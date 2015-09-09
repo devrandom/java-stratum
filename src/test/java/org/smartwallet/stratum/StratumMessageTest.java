@@ -1,7 +1,11 @@
 package org.smartwallet.stratum;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.IntNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.junit.Before;
@@ -26,19 +30,16 @@ public class StratumMessageTest {
         StratumMessage m1 = readValue("{\"id\":123, \"method\":\"a.b\", \"params\":[1, \"x\", null]}");
         assertEquals(123L, (long)m1.id);
         assertEquals("a.b", m1.method);
-        assertEquals(m1.params, Lists.newArrayList(1, "x", null));
+        assertEquals(Lists.newArrayList(new IntNode(1), new TextNode("x"), NullNode.getInstance()), m1.params);
         StratumMessage m2 = readValue("{\"id\":123, \"result\":{\"x\": 123}}");
         assertTrue(m2.isResult());
         assertEquals(123L, (long)m2.id);
-        Map<String, Integer> expected2 = Maps.newTreeMap();
-        expected2.put("x", 123);
-        //noinspection AssertEqualsBetweenInconvertibleTypes
-        assertEquals(expected2, m2.result);
+        assertEquals(mapper.createObjectNode().put("x", 123), m2.result);
 
         StratumMessage m3 = readValue("{\"id\":123, \"result\":[\"x\"]}");
         assertEquals(123L, (long)m3.id);
         //noinspection AssertEqualsBetweenInconvertibleTypes
-        assertEquals(Lists.newArrayList("x"), m3.result);
+        assertEquals(mapper.createArrayNode().add("x"), m3.result);
     }
 
     @Test

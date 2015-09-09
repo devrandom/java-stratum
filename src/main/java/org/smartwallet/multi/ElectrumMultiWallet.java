@@ -1,10 +1,9 @@
 package org.smartwallet.multi;
 
 import org.bitcoinj.core.*;
+import org.bitcoinj.crypto.DeterministicKey;
 import org.bitcoinj.script.Script;
-import org.bitcoinj.wallet.DeterministicKeyChain;
-import org.bitcoinj.wallet.KeyChainGroup;
-import org.bitcoinj.wallet.WalletTransaction;
+import org.bitcoinj.wallet.*;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -13,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.FutureCallback;
@@ -26,9 +26,7 @@ import org.smartwallet.stratum.StratumMessage;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.*;
 
 /**
@@ -44,11 +42,13 @@ public class ElectrumMultiWallet implements MultiWallet {
     protected final ObjectMapper mapper;
     
     private final Map<Sha256Hash, Transaction> txs;
+    private final TxConfidenceTable confidenceTable;
     private BlockingQueue<StratumMessage> addressQueue;
     private ExecutorService addressChangeService;
 
     public ElectrumMultiWallet(SmartWallet wallet, StratumClient client) {
         this.wallet = wallet;
+        confidenceTable = wallet.getContext().getConfidenceTable();
         this.client = client;
         txs = Maps.newConcurrentMap();
         mapper = new ObjectMapper();
@@ -98,29 +98,56 @@ public class ElectrumMultiWallet implements MultiWallet {
     @Override
     public void markKeysAsUsed(Transaction tx) {
         wallet.lockKeychain();
-        KeyChainGroup keychain = wallet.getKeychain();
         try {
-            for (TransactionOutput o : tx.getOutputs()) {
-                try {
-                    Script script = o.getScriptPubKey();
-                    if (script.isSentToRawPubKey()) {
-                        byte[] pubkey = script.getPubKey();
-                        keychain.markPubKeyAsUsed(pubkey);
-                    } else if (script.isSentToAddress()) {
-                        byte[] pubkeyHash = script.getPubKeyHash();
-                        keychain.markPubKeyHashAsUsed(pubkeyHash);
-                    } else if (script.isPayToScriptHash()) {
-                        Address a = Address.fromP2SHScript(tx.getParams(), script);
-                        keychain.markP2SHAddressAsUsed(a);
-                    }
-                } catch (ScriptException e) {
-                    // Just means we didn't understand the output of this transaction: ignore it.
-                    SmartWallet.log.warn("Could not parse tx output script: {}", e.toString());
+            KeyChainGroup group = wallet.getKeychain();
+            List<Object> oldCurrentKeys = getCurrentKeys(group);
+            doMarkKeysAsUsed(tx, group);
+            List<Object> currentKeys = getCurrentKeys(group);
+
+            // We may not get txs in topological order, but KCG assumes they are.
+            // Re-check any tx that we've already seen that may be topologically later.
+            // TODO consider taking height into account to reduce the number of txs we check here.
+            // However, also have to consider that when we first ask for txs, we ask by address instead of by
+            // height.
+            while (!currentKeys.equals(oldCurrentKeys)) {
+                for (Transaction oldTx : txs.values()) {
+                    doMarkKeysAsUsed(oldTx, group);
                 }
+                oldCurrentKeys = currentKeys;
+                currentKeys = getCurrentKeys(group);
             }
         } finally {
             wallet.unlockKeychain();
         }
+    }
+
+    private void doMarkKeysAsUsed(Transaction tx, KeyChainGroup keychain) {
+        for (TransactionOutput o : tx.getOutputs()) {
+            try {
+                Script script = o.getScriptPubKey();
+                if (script.isSentToRawPubKey()) {
+                    byte[] pubkey = script.getPubKey();
+                    keychain.markPubKeyAsUsed(pubkey);
+                } else if (script.isSentToAddress()) {
+                    byte[] pubkeyHash = script.getPubKeyHash();
+                    keychain.markPubKeyHashAsUsed(pubkeyHash);
+                } else if (script.isPayToScriptHash()) {
+                    Address a = Address.fromP2SHScript(tx.getParams(), script);
+                    keychain.markP2SHAddressAsUsed(a);
+                }
+            } catch (ScriptException e) {
+                // Just means we didn't understand the output of this transaction: ignore it.
+                SmartWallet.log.warn("Could not parse tx output script: {}", e.toString());
+            }
+        }
+    }
+
+    /** A list of current keys / scripts, so that we can detect when they change */
+    protected List<Object> getCurrentKeys(KeyChainGroup keychain) {
+        List<Object> list = Lists.newArrayList();
+        list.add(keychain.currentKey(KeyChain.KeyPurpose.RECEIVE_FUNDS));
+        list.add(keychain.currentKey(KeyChain.KeyPurpose.CHANGE));
+        return list;
     }
 
     @Override
@@ -149,17 +176,20 @@ public class ElectrumMultiWallet implements MultiWallet {
         });
     }
     
-    private void subscribeToKeys() {
+    @VisibleForTesting
+    void subscribeToKeys() {
         final NetworkParameters params = wallet.getParams();
         List<DeterministicKeyChain> chains = wallet.getKeychain().getDeterministicKeyChains();
         Set<Address> addresses = Sets.newHashSet();
         for (DeterministicKeyChain chain : chains) {
+            chain.maybeLookAhead();
             if (chain instanceof AddressableKeyChain) {
                 for (ByteString bytes : ((AddressableKeyChain) chain).getP2SHHashes()) {
                     addresses.add(Address.fromP2SHHash(params, bytes.toByteArray()));
                 }
             } else {
-                for (ECKey key : chain.getKeys(true)) {
+                for (ECKey ecKey : chain.getLeafKeys()) {
+                    DeterministicKey key = (DeterministicKey) ecKey;
                     addresses.add(key.toAddress(params));
                 }
             }
@@ -213,7 +243,7 @@ public class ElectrumMultiWallet implements MultiWallet {
         @JsonProperty("tx_hash") public String txHash;
         
         @SuppressWarnings("unused")
-        @JsonProperty("height") public long height;
+        @JsonProperty("height") public int height;
     }
 
     @VisibleForTesting
@@ -235,7 +265,7 @@ public class ElectrumMultiWallet implements MultiWallet {
                     Sha256Hash hash = Sha256Hash.wrap(item.txHash);
                     if (txs.containsKey(hash))
                         return;
-                    retrieveTransaction(hash);
+                    retrieveTransaction(hash, item.height);
                 }
             }
 
@@ -247,7 +277,7 @@ public class ElectrumMultiWallet implements MultiWallet {
     }
 
     @VisibleForTesting
-    void retrieveTransaction(final Sha256Hash hash) {
+    void retrieveTransaction(final Sha256Hash hash, final int height) {
         ListenableFuture<StratumMessage> future = client.call("blockchain.transaction.get", hash.toString());
         Futures.addCallback(future, new FutureCallback<StratumMessage>() {
             @Override
@@ -259,8 +289,7 @@ public class ElectrumMultiWallet implements MultiWallet {
                 }
                 // FIXME check proof
                 Transaction tx = new Transaction(wallet.getParams(), Utils.HEX.decode(hex));
-                txs.put(tx.getHash(), tx);
-                log.info("got tx {}", tx.getHashAsString());
+                receive(tx, height);
             }
 
             @Override
@@ -268,5 +297,13 @@ public class ElectrumMultiWallet implements MultiWallet {
                 log.error("failed to retrieve {}", hash);
             }
         });
+    }
+
+    void receive(Transaction tx, int height) {
+        TransactionConfidence confidence = confidenceTable.getOrCreate(tx.getHash());
+        confidence.setAppearedAtChainHeight(height);
+        txs.put(tx.getHash(), tx);
+        log.info("got tx {}", tx.getHashAsString());
+        markKeysAsUsed(tx);
     }
 }
