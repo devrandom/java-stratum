@@ -15,10 +15,7 @@ import org.jboss.aesh.cl.Arguments;
 import org.jboss.aesh.cl.CommandDefinition;
 import org.jboss.aesh.cl.converter.Converter;
 import org.jboss.aesh.cl.validator.OptionValidatorException;
-import org.jboss.aesh.console.AeshConsole;
-import org.jboss.aesh.console.AeshConsoleBuilder;
-import org.jboss.aesh.console.Console;
-import org.jboss.aesh.console.Prompt;
+import org.jboss.aesh.console.*;
 import org.jboss.aesh.console.command.Command;
 import org.jboss.aesh.console.command.CommandResult;
 import org.jboss.aesh.console.command.converter.ConverterInvocation;
@@ -75,6 +72,7 @@ public class StratumCli {
         //client.startAsync();
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
+                .command(new CloseCommand())
                 .command(new ConnectCommand())
                 .command(new HeaderCommand())
                 .command(new HistoryCommand())
@@ -116,6 +114,15 @@ public class StratumCli {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             stop(commandInvocation);
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="close", description = "close the socket for reconnect testing")
+    public class CloseCommand implements Command {
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            client.closeSocket();
             return CommandResult.SUCCESS;
         }
     }

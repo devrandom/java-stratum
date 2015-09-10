@@ -1,14 +1,14 @@
 package org.smartwallet.stratum;
 
 import org.bitcoinj.core.Address;
+import org.bitcoinj.core.Utils;
 
-import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
-import com.google.common.collect.*;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +49,16 @@ public class StratumClient extends AbstractExecutionThreadService {
     private AtomicLong currentId;
     private Map<Address, Long> subscribedAddresses;
     private long subscribedHeaders = 0;
+    private PingService pingService;
+    static ThreadFactory threadFactory =
+            new ThreadFactoryBuilder()
+                    .setDaemon(true)
+                    .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                        @Override
+                        public void uncaughtException(Thread t, Throwable e) {
+                            logger.error("uncaught exception", e);
+                        }
+                    }).build();
 
     public StratumClient(InetSocketAddress address, boolean isTls) {
         serverAddresses = Lists.newArrayList(address);
@@ -64,28 +74,22 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     @Override
     protected Executor executor() {
-        final ThreadFactory factory =
-                new ThreadFactoryBuilder()
-                        .setDaemon(true)
-                        .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-                            @Override
-                            public void uncaughtException(Thread t, Throwable e) {
-                                logger.error("uncaught exception", e);
-                            }
-                        }).build();
+        return makeExecutor(serviceName());
+    }
+
+    private static Executor makeExecutor(final String name) {
         return new Executor() {
             @Override
             public void execute(Runnable command) {
-                Thread thread = factory.newThread(command);
+                Thread thread = threadFactory.newThread(command);
                 try {
-                    thread.setName(serviceName());
+                    thread.setName(name);
                 } catch (SecurityException e) {
                     // OK if we can't set the name in this environment.
                 }
                 thread.start();
             }
         };
-
     }
 
     static class TrustAllX509TrustManager implements X509TrustManager {
@@ -123,14 +127,55 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     @Override
     protected void startUp() throws Exception {
+    }
+
+    private void connect() throws IOException {
+        pingService = new PingService();
         createSocket();
         outputStream = socket.getOutputStream();
         reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        pingService.startAsync();
+    }
+
+    class PingService extends AbstractExecutionThreadService {
+        @Override
+        protected Executor executor() {
+            return makeExecutor(serviceName());
+        }
+
+        @Override
+        protected void run() throws Exception {
+            boolean first = true;
+            while (isRunning()) {
+                ListenableFuture<StratumMessage> future = call("server.version", "JavaStratumClient 0.1");
+                try {
+                    StratumMessage result = future.get(10, TimeUnit.SECONDS);
+                    if (first) {
+                        logger.info("server version {}", result.result);
+                        first = false;
+                    } else
+                        logger.info("pong");
+                } catch (TimeoutException | ExecutionException e) {
+                    logger.info("ping failure");
+                    socket.close();
+                }
+                Utils.sleep(60*1000);
+            }
+        }
     }
 
     @Override
     protected void triggerShutdown() {
         logger.info("trigger shutdown");
+        disconnect();
+    }
+
+    private void disconnect() {
+        pingService.stopAsync();
+        closeSocket();
+    }
+
+    public void closeSocket() {
         try {
             socket.close();
         } catch (IOException e) {
@@ -161,19 +206,31 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     @Override
     protected void run() {
+        while (isRunning()) {
+            try {
+                connect();
+                runClient();
+                lock.lock();
+                try {
+                    Exception e = new EOFException("reconnecting");
+                    for (SettableFuture<StratumMessage> value : calls.values()) {
+                        value.setException(e);
+                    }
+                    calls.clear();
+                } finally {
+                    lock.unlock();
+                }
+                disconnect();
+            } catch (IOException e) {
+                logger.error("IO exception, will reconnect");
+                Utils.sleep(3000 + new Random().nextInt(4000));
+            }
+        }
+    }
+    
+    protected void runClient() throws IOException {
         lock.lock();
 
-        Futures.addCallback(call("server.version", "StratumClient 0.1"), new FutureCallback<StratumMessage>() {
-            @Override
-            public void onSuccess(StratumMessage result) {
-                logger.info("server version {}", result.result);
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                logger.error("could not get server version");
-            }
-        });
         try {
             for (Map.Entry<Address, Long> entry : subscribedAddresses.entrySet()) {
                 writeMessage("blockchain.address.subscribe", entry.getKey().toString(), entry.getValue());
@@ -188,24 +245,14 @@ public class StratumClient extends AbstractExecutionThreadService {
 
         while (true) {
             String line;
-            try {
-                line = reader.readLine();
-                logger.debug("< {}", line);
-            } catch (IOException e) {
-                handleFatal(e);
-                return;
-            }
+            line = reader.readLine();
+            logger.debug("< {}", line);
             if (line == null) {
                 handleFatal(new EOFException());
                 return;
             }
             StratumMessage message;
-            try {
-                message = mapper.readValue(line, StratumMessage.class);
-            } catch (IOException e) {
-                handleFatal(e);
-                return;
-            }
+            message = mapper.readValue(line, StratumMessage.class);
             if (message.isResult())
                 handleResult(message);
             else if (message.isMessage())
@@ -318,6 +365,6 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     protected void handleFatal(Exception e) {
         logger.error("exception while connected", e);
-        triggerShutdown();
+        closeSocket();
     }
 }
