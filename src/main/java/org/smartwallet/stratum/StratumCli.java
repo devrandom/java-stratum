@@ -40,7 +40,7 @@ import java.util.concurrent.*;
  * Created by devrandom on 2015-Aug-30.
  */
 public class StratumCli {
-    public static final int CALL_TIMEOUT = 5000;
+    public static final int CALL_TIMEOUT = 15000;
     public static NetworkParameters params;
     private StratumClient client;
     private AeshConsole console;

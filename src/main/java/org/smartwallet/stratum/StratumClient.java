@@ -79,6 +79,8 @@ public class StratumClient extends AbstractExecutionThreadService {
         String line;
         try {
             while ((line = reader.readLine()) != null) {
+                if (line.startsWith("#"))
+                    continue;
                 String[] hostPort = line.split(":");
                 String host = hostPort[0];
                 int port = Integer.parseInt(hostPort[1]);
@@ -151,7 +153,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     private void connect() throws IOException {
-        pingService = new PingService();
+        pingService = new PingService(socket);
         createSocket();
         outputStream = socket.getOutputStream();
         reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -159,6 +161,13 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     class PingService extends AbstractExecutionThreadService {
+        // Keep our own copy of the socket, so we don't close any future connection
+        private final Socket socket;
+
+        public PingService(Socket socket) {
+            this.socket = socket;
+        }
+
         @Override
         protected Executor executor() {
             return makeExecutor(serviceName());
@@ -177,7 +186,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                     } else
                         logger.info("pong");
                 } catch (TimeoutException | ExecutionException e) {
-                    logger.info("ping failure");
+                    logger.error("ping failure");
                     socket.close();
                 }
                 Utils.sleep(60*1000);
@@ -243,8 +252,10 @@ public class StratumClient extends AbstractExecutionThreadService {
                 }
                 disconnect();
             } catch (IOException e) {
-                logger.error("IO exception, will reconnect");
-                Utils.sleep(3000 + new Random().nextInt(4000));
+                if (isRunning()) {
+                    logger.error("IO exception, will reconnect");
+                    Utils.sleep(3000 + new Random().nextInt(4000));
+                }
             }
         }
     }
