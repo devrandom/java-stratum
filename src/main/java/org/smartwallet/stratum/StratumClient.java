@@ -60,8 +60,8 @@ public class StratumClient extends AbstractExecutionThreadService {
                         }
                     }).build();
 
-    public StratumClient(InetSocketAddress address, boolean isTls) {
-        serverAddresses = Lists.newArrayList(address);
+    public StratumClient(List<InetSocketAddress> addresses, boolean isTls) {
+        serverAddresses = (addresses != null) ? addresses : getDefaultAddresses();
         mapper = new ObjectMapper();
         mapper.configure(JsonGenerator.Feature.AUTO_CLOSE_TARGET, false);
         currentId = new AtomicLong(1000);
@@ -70,6 +70,24 @@ public class StratumClient extends AbstractExecutionThreadService {
         lock = lockFactory.newReentrantLock("StratumClient-stream");
         this.isTls = isTls;
         subscribedAddresses = Maps.newConcurrentMap();
+    }
+
+    private List<InetSocketAddress> getDefaultAddresses() {
+        ClassLoader classloader = Thread.currentThread().getContextClassLoader();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(classloader.getResourceAsStream("electrum-servers")));
+        List<InetSocketAddress> addresses = Lists.newArrayList();
+        String line;
+        try {
+            while ((line = reader.readLine()) != null) {
+                String[] hostPort = line.split(":");
+                String host = hostPort[0];
+                int port = Integer.parseInt(hostPort[1]);
+                addresses.add(InetSocketAddress.createUnresolved(host, port));
+            }
+        } catch (IOException e) {
+            throw Throwables.propagate(e);
+        }
+        return addresses;
     }
 
     @Override
@@ -108,8 +126,11 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     protected void createSocket() throws IOException {
         // TODO use random, exponentially backoff from failed connections
-        InetSocketAddress address = serverAddresses.get(0);
-        logger.info("Opening a socket to " + address.getHostName() + ":" + address.getPort());
+        InetSocketAddress address = serverAddresses.remove(0);
+        serverAddresses.add(address);
+        // Force resolution
+        address = new InetSocketAddress(address.getHostString(), address.getPort());
+        logger.info("Opening a socket to " + address.getHostString() + ":" + address.getPort());
         if (isTls) {
             try {
                 SSLContext sc = SSLContext.getInstance("TLS");

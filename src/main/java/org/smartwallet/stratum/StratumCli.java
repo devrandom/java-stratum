@@ -52,23 +52,27 @@ public class StratumCli {
 
     public static void main(String[] args) throws IOException {
         params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
-        if (args.length != 1) {
+        if (args.length > 1) {
             System.err.println("Usage: StratumCli HOST:PORT");
             System.exit(1);
         }
-        String[] hostPort = args[0].split(":");
-        if (hostPort.length != 2) {
-            System.err.println("Usage: StratumCli HOST:PORT");
-            System.exit(1);
+        if (args.length > 0) {
+            String[] hostPort = args[0].split(":");
+            if (hostPort.length != 2) {
+                System.err.println("Usage: StratumCli HOST:PORT");
+                System.exit(1);
+            }
+            String host = hostPort[0];
+            int port = Integer.parseInt(hostPort[1]);
+            new StratumCli().run(Lists.newArrayList(new InetSocketAddress(host, port)));
+        } else {
+            new StratumCli().run(null);
         }
-        String host = hostPort[0];
-        int port = Integer.parseInt(hostPort[1]);
-        new StratumCli().run(host, port);
     }
 
-    private void run(String host, int port) {
+    private void run(List<InetSocketAddress> addresses) {
         mapper = new ObjectMapper();
-        client = new StratumClient(new InetSocketAddress(host, port), true);
+        client = new StratumClient(addresses, true);
         //client.startAsync();
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
@@ -137,12 +141,14 @@ public class StratumCli {
     }
 
     private void stop(CommandInvocation commandInvocation) {
-        commandInvocation.stop();
         cleanup();
+        commandInvocation.stop();
     }
 
     private void cleanup() {
         client.stopAsync();
+        client.awaitTerminated();
+        System.out.println("done");
     }
 
     @CommandDefinition(name="version", description = "get server version")
