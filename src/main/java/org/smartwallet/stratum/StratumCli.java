@@ -40,7 +40,7 @@ import java.util.concurrent.*;
  * Created by devrandom on 2015-Aug-30.
  */
 public class StratumCli {
-    public static final int CALL_TIMEOUT = 15000;
+    public static final int CALL_TIMEOUT = 2000;
     public static NetworkParameters params;
     private StratumClient client;
     private AeshConsole console;
@@ -178,17 +178,34 @@ public class StratumCli {
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             List<Object> params = Lists.newArrayList();
             params.addAll(addresses);
-            ListenableFuture<StratumMessage> future = client.call("blockchain.address.get_history", params);
-            try {
-                StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-                print("result: ");
-                println(formatResult(result));
-            } catch (InterruptedException | ExecutionException e) {
-                printerr("failed %s\n", e);
-            } catch (TimeoutException e) {
-                printerrln("timeout");
-            }
+            callAndWaitForResult("blockchain.address.get_history", params);
             return CommandResult.SUCCESS;
+        }
+    }
+
+    private void callAndWaitForResult(String method, List<Object> params) {
+        ListenableFuture<StratumMessage> future = client.call(method, params);
+        final long start = System.currentTimeMillis();
+        try {
+            StratumMessage result = future.get(CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+            print("result: ");
+            println(formatResult(result));
+        } catch (InterruptedException | ExecutionException e) {
+            printerr("failed %s\n", e);
+        } catch (TimeoutException e) {
+            printerrln("timeout, going async");
+            Futures.addCallback(future, new FutureCallback<StratumMessage>() {
+                @Override
+                public void onSuccess(StratumMessage result) {
+                    print("async result in " + (System.currentTimeMillis() - start)/1000 + " seconds:");
+                    println(formatResult(result));
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    printerr("failed %s\n", t);
+                }
+            });
         }
     }
 
