@@ -21,12 +21,15 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.*;
 
 /**
@@ -46,6 +49,10 @@ public class ElectrumMultiWallet implements MultiWallet {
     private BlockingQueue<StratumMessage> addressQueue;
     private ExecutorService addressChangeService;
 
+    public ElectrumMultiWallet(SmartWallet wallet) {
+        this(wallet, new StratumClient());
+    }
+    
     public ElectrumMultiWallet(SmartWallet wallet, StratumClient client) {
         this.wallet = wallet;
         confidenceTable = wallet.getContext().getConfidenceTable();
@@ -137,7 +144,7 @@ public class ElectrumMultiWallet implements MultiWallet {
                 }
             } catch (ScriptException e) {
                 // Just means we didn't understand the output of this transaction: ignore it.
-                SmartWallet.log.warn("Could not parse tx output script: {}", e.toString());
+                log.warn("Could not parse tx output script: {}", e.toString());
             }
         }
     }

@@ -60,6 +60,10 @@ public class StratumClient extends AbstractExecutionThreadService {
                         }
                     }).build();
 
+    public StratumClient() {
+        this(null, true);
+    }
+    
     public StratumClient(List<InetSocketAddress> addresses, boolean isTls) {
         serverAddresses = (addresses != null) ? addresses : getDefaultAddresses();
         mapper = new ObjectMapper();

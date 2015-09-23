@@ -2,7 +2,6 @@ package org.smartwallet.multi;
 
 import org.bitcoinj.core.*;
 import org.bitcoinj.crypto.DeterministicKey;
-import org.bitcoinj.store.UnreadableWalletException;
 import org.bitcoinj.testing.FakeTxBuilder;
 import org.bitcoinj.wallet.DeterministicKeyChain;
 import org.bitcoinj.wallet.DeterministicSeed;
@@ -12,19 +11,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Queues;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import org.junit.Before;
 import org.junit.Test;
+import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
 import org.smartwallet.stratum.StratumSubscription;
 
-import java.net.InetSocketAddress;
 import java.util.concurrent.BlockingQueue;
 
 import static org.easymock.EasyMock.*;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 /**
  * Created by devrandom on 2015-09-09.

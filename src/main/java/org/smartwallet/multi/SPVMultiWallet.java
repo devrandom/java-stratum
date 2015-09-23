@@ -6,7 +6,9 @@ import org.bitcoinj.wallet.KeyChainGroup;
 import org.bitcoinj.wallet.WalletTransaction;
 
 import com.google.common.util.concurrent.ListenableFuture;
-import org.smartwallet.stratum.StratumMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.smartcolors.SmartWallet;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,8 @@ import java.util.concurrent.Executor;
  * Created by devrandom on 2015-09-08.
  */
 public class SPVMultiWallet implements MultiWallet {
+    protected static final Logger log = LoggerFactory.getLogger(SPVMultiWallet.class);
+
     protected final SmartWallet wallet;
     protected final PeerGroup peers;
 
@@ -87,7 +91,7 @@ public class SPVMultiWallet implements MultiWallet {
                     }
                 } catch (ScriptException e) {
                     // Just means we didn't understand the output of this transaction: ignore it.
-                    SmartWallet.log.warn("Could not parse tx output script: {}", e.toString());
+                    log.warn("Could not parse tx output script: {}", e.toString());
                 }
             }
         } finally {
