@@ -8,6 +8,7 @@ import org.bitcoinj.wallet.WalletTransaction;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.smartcolors.MultiWallet;
 import org.smartcolors.SmartWallet;
 
 import java.util.List;
@@ -117,6 +118,16 @@ public class SPVMultiWallet implements MultiWallet {
     @Override
     public ListenableFuture<Transaction> broadcastTransaction(Transaction tx) {
         return peers.broadcastTransaction(tx).future();
+    }
+
+    @Override
+    public void lock() {
+        wallet.lock();
+    }
+
+    @Override
+    public void unlock() {
+        wallet.unlock();
     }
 
     @Override

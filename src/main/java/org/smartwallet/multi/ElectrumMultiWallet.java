@@ -20,6 +20,7 @@ import com.google.protobuf.ByteString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.smartcolors.AddressableKeyChain;
+import org.smartcolors.MultiWallet;
 import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
@@ -98,8 +99,15 @@ public class ElectrumMultiWallet implements MultiWallet {
 
     @Override
     public Map<Sha256Hash, Transaction> getTransactionPool(WalletTransaction.Pool pool) {
-        // FIXME
-        throw new UnsupportedOperationException();
+        // TODO handle other pools?
+        if (pool != WalletTransaction.Pool.UNSPENT)
+            throw new UnsupportedOperationException();
+        List<TransactionOutput> candidates = calculateAllSpendCandidates(true, false);
+        Map<Sha256Hash, Transaction> res = Maps.newHashMap();
+        for (TransactionOutput output : candidates) {
+            res.put(output.getParentTransactionHash(), output.getParentTransaction());
+        }
+        return res;
     }
 
     @Override
@@ -169,7 +177,25 @@ public class ElectrumMultiWallet implements MultiWallet {
 
     @Override
     public List<TransactionOutput> calculateAllSpendCandidates(boolean excludeImmatureCoinbases, boolean excludeUnsignable) {
-        return wallet.calculateAllSpendCandidates(excludeImmatureCoinbases, excludeUnsignable);
+        List<TransactionOutput> candidates = Lists.newArrayList();
+        Set<TransactionOutPoint> spent = Sets.newHashSet();
+        for (Transaction tx : txs.values()) {
+            for (TransactionInput input : tx.getInputs()) {
+                spent.add(input.getOutpoint());
+            }
+        }
+
+        for (Transaction tx : txs.values()) {
+            for (TransactionOutput output : tx.getOutputs()) {
+                if (!spent.contains(output.getOutPointFor())) {
+                    if (output.isMine(this)) {
+                        candidates.add(output);
+                    }
+                }
+            }
+        }
+        
+        return candidates;
     }
 
     @Override
@@ -181,6 +207,16 @@ public class ElectrumMultiWallet implements MultiWallet {
                 return tx;
             }
         });
+    }
+
+    @Override
+    public void lock() {
+        wallet.lock();
+    }
+
+    @Override
+    public void unlock() {
+        wallet.unlock();
     }
 
     @Override
