@@ -282,7 +282,7 @@ public class StratumClient extends AbstractExecutionThreadService {
         while (true) {
             String line;
             line = reader.readLine();
-            logger.debug("< {}", line);
+            logger.info("< {}", line);
             if (line == null) {
                 handleFatal(new EOFException());
                 return;
@@ -313,7 +313,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                 return null;
             SettableFuture<StratumMessage> future = SettableFuture.create();
             calls.put(message.id, future);
-            logger.debug("> {}", mapper.writeValueAsString(message));
+            logger.info("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
             outputStream.write('\n');
             return future;

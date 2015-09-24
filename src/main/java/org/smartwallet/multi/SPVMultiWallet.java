@@ -118,4 +118,21 @@ public class SPVMultiWallet implements MultiWallet {
     public ListenableFuture<Transaction> broadcastTransaction(Transaction tx) {
         return peers.broadcastTransaction(tx).future();
     }
+
+    @Override
+    public void start() {
+        peers.start();
+    }
+
+    @Override
+    public void startAsync() {
+        peers.startAsync();
+    }
+
+    @Override
+    public void awaitDownload() throws InterruptedException {
+        DownloadProgressTracker listener = new DownloadProgressTracker();
+        peers.startBlockChainDownload(listener);
+        listener.await();
+    }
 }

@@ -21,9 +21,11 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.smartcolors.AddressableKeyChain;
 import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
+import org.smartwallet.stratum.StratumSubscription;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -182,9 +184,32 @@ public class ElectrumMultiWallet implements MultiWallet {
             }
         });
     }
-    
+
+    @Override
+    public void start() {
+        startAsync();
+        client.awaitRunning();
+    }
+
+    @Override
+    public void startAsync() {
+        downloadFuture = subscribeToKeys();
+        client.startAsync();
+    }
+
+    @Override
+    public void awaitDownload() throws InterruptedException {
+        try {
+            downloadFuture.get();
+        } catch (ExecutionException e) {
+            Throwables.propagate(e);
+        }
+    }
+
+    ListenableFuture<List<StratumMessage>> downloadFuture;
+
     @VisibleForTesting
-    void subscribeToKeys() {
+    ListenableFuture<List<StratumMessage>> subscribeToKeys() {
         final NetworkParameters params = wallet.getParams();
         List<DeterministicKeyChain> chains = wallet.getKeychain().getDeterministicKeyChains();
         Set<Address> addresses = Sets.newHashSet();
@@ -202,10 +227,14 @@ public class ElectrumMultiWallet implements MultiWallet {
             }
         }
         
+        List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
         for (Address address : addresses) {
-            addressQueue = client.subscribe(address).queue;
+            StratumSubscription subscription = client.subscribe(address);
+            addressQueue = subscription.queue;
+            futures.add(subscription.future);
             listenToAddressQueue();
         }
+        return Futures.allAsList(futures);
     }
 
     private void listenToAddressQueue() {
