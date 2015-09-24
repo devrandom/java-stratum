@@ -15,9 +15,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.*;
 import com.google.protobuf.ByteString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -193,23 +191,29 @@ public class ElectrumMultiWallet implements MultiWallet {
 
     @Override
     public void startAsync() {
-        downloadFuture = subscribeToKeys();
+        subscribeToKeys();
         client.startAsync();
     }
 
     @Override
     public void awaitDownload() throws InterruptedException {
         try {
-            downloadFuture.get();
+            List<Integer> res = Futures.allAsList(downloadFutures.values()).get();
+            int count = 0;
+            for (Integer item : res) {
+                count += item;
+            }
+            log.info("synced {} transactions", count);
         } catch (ExecutionException e) {
             Throwables.propagate(e);
         }
     }
 
-    ListenableFuture<List<StratumMessage>> downloadFuture;
+    private ListenableFuture<List<Integer>> downloadFuture;
+    Map<String, SettableFuture<Integer>> downloadFutures = Maps.newConcurrentMap();
 
     @VisibleForTesting
-    ListenableFuture<List<StratumMessage>> subscribeToKeys() {
+    void subscribeToKeys() {
         final NetworkParameters params = wallet.getParams();
         List<DeterministicKeyChain> chains = wallet.getKeychain().getDeterministicKeyChains();
         Set<Address> addresses = Sets.newHashSet();
@@ -227,14 +231,28 @@ public class ElectrumMultiWallet implements MultiWallet {
             }
         }
         
-        List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
-        for (Address address : addresses) {
+        for (final Address address : addresses) {
+            final String addressString = address.toString();
+            downloadFutures.put(addressString, SettableFuture.<Integer>create());
             StratumSubscription subscription = client.subscribe(address);
             addressQueue = subscription.queue;
-            futures.add(subscription.future);
             listenToAddressQueue();
+            Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
+                @Override
+                public void onSuccess(StratumMessage result) {
+                    if (result.result.isNull()) {
+                        downloadFutures.get(addressString).set(0);
+                    } else {
+                        retrieveAddressHistory(addressString);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    downloadFutures.get(addressString).setException(t);
+                }
+            });
         }
-        return Futures.allAsList(futures);
     }
 
     private void listenToAddressQueue() {
@@ -288,7 +306,7 @@ public class ElectrumMultiWallet implements MultiWallet {
         Futures.addCallback(future, new FutureCallback<StratumMessage>() {
             @Override
             public void onSuccess(StratumMessage result) {
-                List<AddressHistoryItem> history;
+                final List<AddressHistoryItem> history;
                 try {
                     history = mapper.readValue(mapper.treeAsTokens(result.result), new TypeReference<List<AddressHistoryItem>>() {});
                 } catch (IOException e) {
@@ -297,12 +315,31 @@ public class ElectrumMultiWallet implements MultiWallet {
                 }
 
                 log.info("got history of length {} for {}", history.size(), address);
+                List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
                 for (AddressHistoryItem item : history) {
                     Sha256Hash hash = Sha256Hash.wrap(item.txHash);
                     if (txs.containsKey(hash))
                         return;
-                    retrieveTransaction(hash, item.height);
+                    futures.add(retrieveTransaction(hash, item.height));
                 }
+                ListenableFuture completeFuture = Futures.allAsList(futures);
+                Futures.addCallback(completeFuture, new FutureCallback() {
+                    @Override
+                    public void onSuccess(Object result) {
+                        SettableFuture<Integer> settable = downloadFutures.get(address);
+                        if (settable != null && !settable.isDone()) {
+                            settable.set(history.size());
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        SettableFuture<Integer> settable = downloadFutures.get(address);
+                        if (settable != null && !settable.isDone()) {
+                            settable.setException(t);
+                        }
+                    }
+                });
             }
 
             @Override
@@ -313,7 +350,7 @@ public class ElectrumMultiWallet implements MultiWallet {
     }
 
     @VisibleForTesting
-    void retrieveTransaction(final Sha256Hash hash, final int height) {
+    ListenableFuture<StratumMessage> retrieveTransaction(final Sha256Hash hash, final int height) {
         ListenableFuture<StratumMessage> future = client.call("blockchain.transaction.get", hash.toString());
         Futures.addCallback(future, new FutureCallback<StratumMessage>() {
             @Override
@@ -333,6 +370,7 @@ public class ElectrumMultiWallet implements MultiWallet {
                 log.error("failed to retrieve {}", hash);
             }
         });
+        return future;
     }
 
     void receive(Transaction tx, int height) {
