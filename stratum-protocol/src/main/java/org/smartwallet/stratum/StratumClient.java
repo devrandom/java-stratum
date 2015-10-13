@@ -31,6 +31,9 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 /**
  * Created by devrandom on 2015-Aug-25.
  */
@@ -51,10 +54,20 @@ public class StratumClient extends AbstractExecutionThreadService {
     private AtomicLong currentId;
     private Map<Address, Long> subscribedAddresses;
     private long subscribedHeaders = 0;
-    private PingService pingService;
+    private Pinger pinger;
     static ThreadFactory threadFactory =
             new ThreadFactoryBuilder()
                     .setDaemon(true)
+                    .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                        @Override
+                        public void uncaughtException(Thread t, Throwable e) {
+                            logger.error("uncaught exception", e);
+                        }
+                    }).build();
+    static ThreadFactory pingerThreadFactory =
+            new ThreadFactoryBuilder()
+                    .setDaemon(true)
+                    .setNameFormat("pinger-%d")
                     .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
                         @Override
                         public void uncaughtException(Thread t, Throwable e) {
@@ -159,53 +172,62 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     private void connect() throws IOException {
-        pingService = new PingService();
+        logger.info("connect");
+        pinger = new Pinger();
         createSocket();
         outputStream = socket.getOutputStream();
         reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        pingService.startAsync();
+        pinger.start();
     }
 
-    class PingService extends AbstractExecutionThreadService {
+    class Pinger implements Runnable {
+        private final ScheduledExecutorService scheduler =
+                Executors.newSingleThreadScheduledExecutor(pingerThreadFactory);
+        private ScheduledFuture<?> handle;
+        private boolean first = true;
 
-        public PingService() {
+        Pinger() {
         }
 
-        @Override
-        protected Executor executor() {
-            return makeExecutor(serviceName());
+        public void start() {
+            checkState(handle == null);
+            handle = scheduler.scheduleAtFixedRate(this, 0, 10, TimeUnit.SECONDS);
         }
 
-        @Override
-        protected void run() throws Exception {
-            logger.info("start");
-            boolean first = true;
-            while (isRunning()) {
-                ListenableFuture<StratumMessage> future = call("server.version", "JavaStratumClient 0.1");
-                try {
-                    StratumMessage result = future.get(10, TimeUnit.SECONDS);
-                    if (first) {
-                        logger.info("server version {}", result.result);
-                        first = false;
-                    } else
-                        logger.info("pong");
-                } catch (TimeoutException | ExecutionException e) {
-                    logger.error("ping failure");
-                    socket.close();
-                    break;
-                }
-                try {
-                    for (int i = 0; i < 60; i++) {
-                        Thread.sleep(1000);
-                        if (!isRunning())
-                            break;
-                    }
-                } catch (InterruptedException e) {
-                    logger.info("interrupt");
-                    throw e;
-                }
+        public void stop() {
+            checkNotNull(handle);
+            handle.cancel(true);
+            scheduler.shutdown();
+            try {
+                if (!scheduler.awaitTermination(1, TimeUnit.SECONDS))
+                    throw new RuntimeException("scheduler did not terminate");
+            } catch (InterruptedException e) {
+                Throwables.propagate(e);
             }
-            logger.info("stop");
+        }
+
+        @Override
+        public void run() {
+            try {
+                doRun();
+            } catch (InterruptedException | IOException e) {
+                Throwables.propagate(e);
+            }
+        }
+
+        private void doRun() throws InterruptedException, IOException {
+            ListenableFuture<StratumMessage> future = call("server.version", "JavaStratumClient 0.1");
+            try {
+                StratumMessage result = future.get(10, TimeUnit.SECONDS);
+                if (first) {
+                    logger.info("server version {}", result.result);
+                    first = false;
+                } else
+                    logger.info("pong");
+            } catch (TimeoutException | ExecutionException e) {
+                logger.error("ping failure");
+                socket.close();
+            }
         }
     }
 
@@ -217,8 +239,7 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     private void disconnect() {
         logger.info("stop pinger");
-        pingService.stopAsync();
-        pingService.awaitTerminated();
+        pinger.stop();
         logger.info("stopped pinger");
         closeSocket();
     }
