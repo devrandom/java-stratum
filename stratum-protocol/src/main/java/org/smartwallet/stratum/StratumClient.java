@@ -1,8 +1,5 @@
 package org.smartwallet.stratum;
 
-import org.bitcoinj.core.Address;
-import org.bitcoinj.core.Utils;
-
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
@@ -10,6 +7,8 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.*;
+import org.bitcoinj.core.Address;
+import org.bitcoinj.core.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +23,10 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -157,7 +159,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     private void connect() throws IOException {
-        pingService = new PingService(socket);
+        pingService = new PingService();
         createSocket();
         outputStream = socket.getOutputStream();
         reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -165,11 +167,8 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     class PingService extends AbstractExecutionThreadService {
-        // Keep our own copy of the socket, so we don't close any future connection
-        private final Socket socket;
 
-        public PingService(Socket socket) {
-            this.socket = socket;
+        public PingService() {
         }
 
         @Override
@@ -179,6 +178,7 @@ public class StratumClient extends AbstractExecutionThreadService {
 
         @Override
         protected void run() throws Exception {
+            logger.info("start");
             boolean first = true;
             while (isRunning()) {
                 ListenableFuture<StratumMessage> future = call("server.version", "JavaStratumClient 0.1");
@@ -192,9 +192,20 @@ public class StratumClient extends AbstractExecutionThreadService {
                 } catch (TimeoutException | ExecutionException e) {
                     logger.error("ping failure");
                     socket.close();
+                    break;
                 }
-                Utils.sleep(60*1000);
+                try {
+                    for (int i = 0; i < 60; i++) {
+                        Thread.sleep(1000);
+                        if (!isRunning())
+                            break;
+                    }
+                } catch (InterruptedException e) {
+                    logger.info("interrupt");
+                    throw e;
+                }
             }
+            logger.info("stop");
         }
     }
 
@@ -205,7 +216,10 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     private void disconnect() {
+        logger.info("stop pinger");
         pingService.stopAsync();
+        pingService.awaitTerminated();
+        logger.info("stopped pinger");
         closeSocket();
     }
 
@@ -258,6 +272,7 @@ public class StratumClient extends AbstractExecutionThreadService {
             } catch (IOException e) {
                 if (isRunning()) {
                     logger.error("IO exception, will reconnect");
+                    disconnect();
                     Utils.sleep(3000 + new Random().nextInt(4000));
                 }
             }

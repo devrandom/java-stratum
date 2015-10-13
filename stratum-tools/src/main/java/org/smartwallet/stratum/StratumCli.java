@@ -1,9 +1,5 @@
 package org.smartwallet.stratum;
 
-import org.bitcoinj.core.Address;
-import org.bitcoinj.core.AddressFormatException;
-import org.bitcoinj.core.NetworkParameters;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
@@ -11,11 +7,18 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.bitcoinj.core.Address;
+import org.bitcoinj.core.AddressFormatException;
+import org.bitcoinj.core.NetworkParameters;
+import org.bitcoinj.utils.BriefLogFormatter;
 import org.jboss.aesh.cl.Arguments;
 import org.jboss.aesh.cl.CommandDefinition;
 import org.jboss.aesh.cl.converter.Converter;
 import org.jboss.aesh.cl.validator.OptionValidatorException;
-import org.jboss.aesh.console.*;
+import org.jboss.aesh.console.AeshConsole;
+import org.jboss.aesh.console.AeshConsoleBuilder;
+import org.jboss.aesh.console.Console;
+import org.jboss.aesh.console.Prompt;
 import org.jboss.aesh.console.command.Command;
 import org.jboss.aesh.console.command.CommandResult;
 import org.jboss.aesh.console.command.converter.ConverterInvocation;
@@ -29,12 +32,16 @@ import org.jboss.aesh.edit.actions.Action;
 import org.jboss.aesh.terminal.Color;
 import org.jboss.aesh.terminal.TerminalColor;
 import org.jboss.aesh.terminal.TerminalString;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.logging.Level;
+import java.util.logging.LogManager;
 
 /**
  * Created by devrandom on 2015-Aug-30.
@@ -42,6 +49,8 @@ import java.util.concurrent.*;
 public class StratumCli {
     public static final int CALL_TIMEOUT = 2000;
     public static NetworkParameters params;
+    protected static Logger log = LoggerFactory.getLogger("StratumCli");
+
     private StratumClient client;
     private AeshConsole console;
     private ObjectMapper mapper;
@@ -51,6 +60,10 @@ public class StratumCli {
     private ExecutorService headersChangeService;
 
     public static void main(String[] args) throws IOException {
+        BriefLogFormatter.init();
+        LogManager.getLogManager().getLogger("").setLevel(Level.FINEST);
+        log.info("Starting up ...");
+
         params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
         if (args.length > 1) {
             System.err.println("Usage: StratumCli HOST:PORT");
@@ -90,7 +103,7 @@ public class StratumCli {
                 .command(new SubscribeHeadersCommand())
                 .create();
         Settings settings = new SettingsBuilder()
-                .logging(true)
+                .logging(false)
                 .persistHistory(true)
                 .historyFile(new File(System.getProperty("user.home"), ".cache/stratum-cli.hist"))
                 .interruptHook(new InterruptHook() {
