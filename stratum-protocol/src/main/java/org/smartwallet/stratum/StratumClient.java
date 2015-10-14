@@ -185,9 +185,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                 Executors.newSingleThreadScheduledExecutor(pingerThreadFactory);
         private ScheduledFuture<?> handle;
         private boolean first = true;
-
-        Pinger() {
-        }
+        private ListenableFuture<StratumMessage> future;
 
         public void start() {
             checkState(handle == null);
@@ -197,6 +195,8 @@ public class StratumClient extends AbstractExecutionThreadService {
         public void stop() {
             checkNotNull(handle);
             handle.cancel(true);
+            if (future != null)
+                future.cancel(true);
             scheduler.shutdown();
             try {
                 if (!scheduler.awaitTermination(1, TimeUnit.SECONDS))
@@ -216,18 +216,32 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
 
         private void doRun() throws InterruptedException, IOException {
-            ListenableFuture<StratumMessage> future = call("server.version", "JavaStratumClient 0.1");
-            try {
-                StratumMessage result = future.get(10, TimeUnit.SECONDS);
-                if (first) {
-                    logger.info("server version {}", result.result);
-                    first = false;
-                } else
-                    logger.info("pong");
-            } catch (TimeoutException | ExecutionException e) {
-                logger.error("ping failure");
-                socket.close();
+            if (future != null) {
+                if (future.cancel(true))
+                    return; // cancel succeeded means that we timed out
             }
+            // Keep a copy of the socket so we don't close a new one due to race in onFailure
+            final Socket mySocket = socket;
+            future = call("server.version", "JavaStratumClient 0.1");
+            Futures.addCallback(future, new FutureCallback<StratumMessage>() {
+                @Override
+                public void onSuccess(StratumMessage result) {
+                    if (first) {
+                        logger.info("server version {}", result.result);
+                        first = false;
+                    } else
+                        logger.info("pong");
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    logger.error("ping failure");
+                    try {
+                        mySocket.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+            });
         }
     }
 
