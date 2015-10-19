@@ -8,6 +8,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.*;
 import org.bitcoinj.core.Address;
+import org.bitcoinj.core.NetworkParameters;
 import org.bitcoinj.core.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     private final ConcurrentMap<Long, SettableFuture<StratumMessage>> calls;
     private final ReentrantLock lock;
     private final ConcurrentMap<String, BlockingQueue<StratumMessage>> subscriptions;
+    private final NetworkParameters params;
 
     protected List<InetSocketAddress> serverAddresses;
     protected Socket socket;
@@ -76,10 +78,11 @@ public class StratumClient extends AbstractExecutionThreadService {
                     }).build();
 
     public StratumClient() {
-        this(null, true);
+        this(NetworkParameters.fromID(NetworkParameters.ID_TESTNET), null, true);
     }
     
-    public StratumClient(List<InetSocketAddress> addresses, boolean isTls) {
+    public StratumClient(NetworkParameters params, List<InetSocketAddress> addresses, boolean isTls) {
+        this.params = params;
         serverAddresses = (addresses != null) ? addresses : getDefaultAddresses();
         mapper = new ObjectMapper();
         mapper.configure(JsonGenerator.Feature.AUTO_CLOSE_TARGET, false);
@@ -93,7 +96,8 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     private List<InetSocketAddress> getDefaultAddresses() {
         ClassLoader classloader = Thread.currentThread().getContextClassLoader();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(classloader.getResourceAsStream("electrum-servers")));
+        String listName = params.getId().equals(NetworkParameters.ID_MAINNET) ? "electrum-servers" : "electrum-servers-testnet";
+        BufferedReader reader = new BufferedReader(new InputStreamReader(classloader.getResourceAsStream(listName)));
         List<InetSocketAddress> addresses = Lists.newArrayList();
         String line;
         try {

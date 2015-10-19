@@ -7,6 +7,8 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import joptsimple.OptionParser;
+import joptsimple.OptionSet;
 import org.bitcoinj.core.Address;
 import org.bitcoinj.core.AddressFormatException;
 import org.bitcoinj.core.NetworkParameters;
@@ -50,6 +52,8 @@ public class StratumCli {
     public static final int CALL_TIMEOUT = 2000;
     public static NetworkParameters params;
     protected static Logger log = LoggerFactory.getLogger("StratumCli");
+    private static OptionParser parser;
+    private static OptionSet options;
 
     private StratumClient client;
     private AeshConsole console;
@@ -64,13 +68,32 @@ public class StratumCli {
         LogManager.getLogManager().getLogger("").setLevel(Level.FINEST);
         log.info("Starting up ...");
 
-        params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
+        parser = new OptionParser();
+        parser.accepts("prod", "use prodnet (default is testnet)");
+        parser.accepts("regtest", "use regtest mode (default is testnet)");
+
         if (args.length > 1) {
             System.err.println("Usage: StratumCli HOST:PORT");
             System.exit(1);
         }
-        if (args.length > 0) {
-            String[] hostPort = args[0].split(":");
+
+        options = parser.parse(args);
+        String net;
+        if (options.has("prod")) {
+            net = "prodnet";
+            params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
+        } else if (options.has("regtest")) {
+            net = "regtest";
+            params = NetworkParameters.fromID(NetworkParameters.ID_REGTEST);
+        } else {
+            net = "testnet";
+            params = NetworkParameters.fromID(NetworkParameters.ID_TESTNET);
+        }
+
+        List<String> cmds = (List<String>) options.nonOptionArguments();
+
+        if (cmds.size() > 0) {
+            String[] hostPort = cmds.remove(0).split(":");
             if (hostPort.length != 2) {
                 System.err.println("Usage: StratumCli HOST:PORT");
                 System.exit(1);
@@ -85,8 +108,8 @@ public class StratumCli {
 
     private void run(List<InetSocketAddress> addresses) {
         mapper = new ObjectMapper();
-        client = new StratumClient(addresses, true);
-        //client.startAsync();
+        client = new StratumClient(params, addresses, true);
+        client.startAsync();
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
                 .command(new CloseCommand())
