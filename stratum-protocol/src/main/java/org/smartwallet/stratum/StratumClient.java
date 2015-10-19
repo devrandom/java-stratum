@@ -13,6 +13,7 @@ import org.bitcoinj.core.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.concurrent.GuardedBy;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -24,10 +25,7 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -80,7 +78,11 @@ public class StratumClient extends AbstractExecutionThreadService {
     public StratumClient() {
         this(NetworkParameters.fromID(NetworkParameters.ID_TESTNET), null, true);
     }
-    
+
+    public StratumClient(NetworkParameters params) {
+        this(params, null, true);
+    }
+
     public StratumClient(NetworkParameters params, List<InetSocketAddress> addresses, boolean isTls) {
         this.params = params;
         serverAddresses = (addresses != null) ? addresses : getDefaultAddresses();
@@ -291,24 +293,20 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
     }
 
+    @GuardedBy("StratumClient-stream")
+    boolean isConnected;
+
     @Override
     protected void run() {
         while (isRunning()) {
             try {
                 connect();
+                setConnected(true);
                 runClient();
-                lock.lock();
-                try {
-                    Exception e = new EOFException("reconnecting");
-                    for (SettableFuture<StratumMessage> value : calls.values()) {
-                        value.setException(e);
-                    }
-                    calls.clear();
-                } finally {
-                    lock.unlock();
-                }
+                setConnected(false);
                 disconnect();
             } catch (IOException e) {
+                setConnected(false);
                 if (isRunning()) {
                     logger.error("IO exception, will reconnect");
                     disconnect();
@@ -317,7 +315,20 @@ public class StratumClient extends AbstractExecutionThreadService {
             }
         }
     }
-    
+
+    private void setConnected(boolean value) {
+        lock.lock();
+        isConnected = value;
+        if (!value) {
+            Exception e = new EOFException("reconnecting");
+            for (SettableFuture<StratumMessage> future : calls.values()) {
+                future.setException(e);
+            }
+            calls.clear();
+        }
+        lock.unlock();
+    }
+
     protected void runClient() throws IOException {
         lock.lock();
 
@@ -367,9 +378,11 @@ public class StratumClient extends AbstractExecutionThreadService {
                 return null;
             SettableFuture<StratumMessage> future = SettableFuture.create();
             calls.put(message.id, future);
-            logger.info("> {}", mapper.writeValueAsString(message));
-            mapper.writeValue(outputStream, message);
-            outputStream.write('\n');
+            if (isConnected) {
+                logger.info("> {}", mapper.writeValueAsString(message));
+                mapper.writeValue(outputStream, message);
+                outputStream.write('\n');
+            }
             return future;
         } catch (IOException e) {
             return Futures.immediateFailedFuture(e);
@@ -398,7 +411,7 @@ public class StratumClient extends AbstractExecutionThreadService {
             }
             SettableFuture<StratumMessage> future = SettableFuture.create();
             calls.put(id, future);
-            if (isRunning())
+            if (isConnected)
                 writeMessage(method, param, id);
             return new StratumSubscription(future, subscriptions.get(method));
         } finally {

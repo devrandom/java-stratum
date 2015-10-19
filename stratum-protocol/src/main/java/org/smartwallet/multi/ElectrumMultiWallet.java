@@ -1,10 +1,5 @@
 package org.smartwallet.multi;
 
-import org.bitcoinj.core.*;
-import org.bitcoinj.crypto.DeterministicKey;
-import org.bitcoinj.script.Script;
-import org.bitcoinj.wallet.*;
-
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -17,10 +12,15 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.*;
 import com.google.protobuf.ByteString;
+import org.bitcoinj.core.*;
+import org.bitcoinj.crypto.DeterministicKey;
+import org.bitcoinj.script.Script;
+import org.bitcoinj.utils.ListenerRegistration;
+import org.bitcoinj.utils.Threading;
+import org.bitcoinj.wallet.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.smartcolors.AddressableKeyChain;
-import org.smartcolors.MultiWallet;
 import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
@@ -38,7 +38,7 @@ import java.util.concurrent.*;
  * 
  * Created by devrandom on 2015-09-08.
  */
-public class ElectrumMultiWallet implements MultiWallet {
+public class ElectrumMultiWallet extends SmartMultiWallet {
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
     protected final SmartWallet wallet;
@@ -49,27 +49,30 @@ public class ElectrumMultiWallet implements MultiWallet {
     private final TxConfidenceTable confidenceTable;
     private BlockingQueue<StratumMessage> addressQueue;
     private ExecutorService addressChangeService;
+    private transient CopyOnWriteArrayList<ListenerRegistration<MultiWalletEventListener>> eventListeners;
 
     public ElectrumMultiWallet(SmartWallet wallet) {
-        this(wallet, new StratumClient());
+        this(wallet, new StratumClient(wallet.getNetworkParameters()));
     }
     
     public ElectrumMultiWallet(SmartWallet wallet, StratumClient client) {
+        super(wallet);
         this.wallet = wallet;
-        confidenceTable = wallet.getContext().getConfidenceTable();
+        confidenceTable = getContext().getConfidenceTable();
         this.client = client;
         txs = Maps.newConcurrentMap();
         mapper = new ObjectMapper();
+        eventListeners = new CopyOnWriteArrayList<>();
     }
     
     @Override
-    public void addEventListener(WalletEventListener listener, Executor executor) {
-        wallet.addEventListener(listener, executor);
+    public void addEventListener(MultiWalletEventListener listener, Executor executor) {
+        eventListeners.add(new ListenerRegistration<>(listener, executor));
     }
 
     @Override
-    public boolean removeEventListener(WalletEventListener listener) {
-        return wallet.removeEventListener(listener);
+    public boolean removeEventListener(MultiWalletEventListener listener) {
+        return ListenerRegistration.removeFromList(listener, eventListeners);
     }
 
     @Override
@@ -78,28 +81,10 @@ public class ElectrumMultiWallet implements MultiWallet {
     }
 
     @Override
-    public boolean isPubKeyHashMine(byte[] pubkeyHash) {
-        return wallet.isPubKeyHashMine(pubkeyHash);
-    }
-
-    @Override
-    public boolean isWatchedScript(Script script) {
-        return wallet.isWatchedScript(script);
-    }
-
-    @Override
-    public boolean isPubKeyMine(byte[] pubkey) {
-        return wallet.isPubKeyHashMine(pubkey);
-    }
-
-    @Override
-    public boolean isPayToScriptHashMine(byte[] payToScriptHash) {
-        return wallet.isPayToScriptHashMine(payToScriptHash);
-    }
-
-    @Override
     public Map<Sha256Hash, Transaction> getTransactionPool(WalletTransaction.Pool pool) {
         // TODO handle other pools?
+        if (pool == WalletTransaction.Pool.PENDING)
+            return Maps.newHashMap(); // FIXME
         if (pool != WalletTransaction.Pool.UNSPENT)
             throw new UnsupportedOperationException();
         List<TransactionOutput> candidates = calculateAllSpendCandidates(true, false);
@@ -210,16 +195,6 @@ public class ElectrumMultiWallet implements MultiWallet {
     }
 
     @Override
-    public void lock() {
-        wallet.lock();
-    }
-
-    @Override
-    public void unlock() {
-        wallet.unlock();
-    }
-
-    @Override
     public void start() {
         startAsync();
         client.awaitRunning();
@@ -245,7 +220,6 @@ public class ElectrumMultiWallet implements MultiWallet {
         }
     }
 
-    private ListenableFuture<List<Integer>> downloadFuture;
     Map<String, SettableFuture<Integer>> downloadFutures = Maps.newConcurrentMap();
 
     @VisibleForTesting
@@ -415,5 +389,21 @@ public class ElectrumMultiWallet implements MultiWallet {
         txs.put(tx.getHash(), tx);
         log.info("got tx {}", tx.getHashAsString());
         markKeysAsUsed(tx);
+        notifyTransaction(tx);
+    }
+
+    private void notifyTransaction(final Transaction tx) {
+        for (final ListenerRegistration<MultiWalletEventListener> registration : eventListeners) {
+            if (registration.executor == Threading.SAME_THREAD) {
+                registration.listener.onTransaction(this, tx);
+            } else {
+                registration.executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        registration.listener.onTransaction(ElectrumMultiWallet.this, tx);
+                    }
+                });
+            }
+        }
     }
 }

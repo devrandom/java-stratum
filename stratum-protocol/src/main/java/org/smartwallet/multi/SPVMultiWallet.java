@@ -1,14 +1,14 @@
 package org.smartwallet.multi;
 
+import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.ListenableFuture;
 import org.bitcoinj.core.*;
 import org.bitcoinj.script.Script;
+import org.bitcoinj.utils.Threading;
 import org.bitcoinj.wallet.KeyChainGroup;
 import org.bitcoinj.wallet.WalletTransaction;
-
-import com.google.common.util.concurrent.ListenableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.smartcolors.MultiWallet;
 import org.smartcolors.SmartWallet;
 
 import java.util.List;
@@ -21,50 +21,51 @@ import java.util.concurrent.Executor;
  * 
  * Created by devrandom on 2015-09-08.
  */
-public class SPVMultiWallet implements MultiWallet {
+public class SPVMultiWallet extends SmartMultiWallet {
     protected static final Logger log = LoggerFactory.getLogger(SPVMultiWallet.class);
 
-    protected final SmartWallet wallet;
     protected final PeerGroup peers;
+    private final Map<MultiWalletEventListener, WalletEventListener> listenerMap;
 
     public SPVMultiWallet(SmartWallet wallet, PeerGroup peers) {
-        this.wallet = wallet;
+        super(wallet);
         this.peers = peers;
+        listenerMap = Maps.newConcurrentMap();
     }
 
     @Override
-    public void addEventListener(WalletEventListener listener, Executor executor) {
-        wallet.addEventListener(listener, executor);
+    public void addEventListener(final MultiWalletEventListener listener, Executor executor) {
+        AbstractWalletEventListener walletListener = new AbstractWalletEventListener() {
+            @Override
+            public void onCoinsReceived(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
+                super.onCoinsReceived(wallet, tx, prevBalance, newBalance);
+                listener.onTransaction(SPVMultiWallet.this, tx);
+            }
+
+            @Override
+            public void onCoinsSent(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
+                // FIXME change bitcoinj so that we get this also when diff = 0
+                super.onCoinsSent(wallet, tx, prevBalance, newBalance);
+                listener.onTransaction(SPVMultiWallet.this, tx);
+            }
+
+            @Override
+            public void onTransactionConfidenceChanged(Wallet wallet, Transaction tx) {
+                super.onTransactionConfidenceChanged(wallet, tx);
+            }
+        };
+        listenerMap.put(listener, walletListener);
+        wallet.addEventListener(walletListener, Threading.SAME_THREAD);
     }
 
     @Override
-    public boolean removeEventListener(WalletEventListener listener) {
-        return wallet.removeEventListener(listener);
+    public boolean removeEventListener(MultiWalletEventListener listener) {
+        return wallet.removeEventListener(listenerMap.remove(listener));
     }
 
     @Override
     public Set<Transaction> getTransactions() {
         return wallet.getTransactions(true);
-    }
-
-    @Override
-    public boolean isPubKeyHashMine(byte[] pubkeyHash) {
-        return wallet.isPubKeyHashMine(pubkeyHash);
-    }
-
-    @Override
-    public boolean isWatchedScript(Script script) {
-        return wallet.isWatchedScript(script);
-    }
-
-    @Override
-    public boolean isPubKeyMine(byte[] pubkey) {
-        return wallet.isPubKeyHashMine(pubkey);
-    }
-
-    @Override
-    public boolean isPayToScriptHashMine(byte[] payToScriptHash) {
-        return wallet.isPayToScriptHashMine(payToScriptHash);
     }
 
     @Override
@@ -118,16 +119,6 @@ public class SPVMultiWallet implements MultiWallet {
     @Override
     public ListenableFuture<Transaction> broadcastTransaction(Transaction tx) {
         return peers.broadcastTransaction(tx).future();
-    }
-
-    @Override
-    public void lock() {
-        wallet.lock();
-    }
-
-    @Override
-    public void unlock() {
-        wallet.unlock();
     }
 
     @Override
