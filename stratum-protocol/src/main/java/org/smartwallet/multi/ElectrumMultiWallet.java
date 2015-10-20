@@ -21,6 +21,7 @@ import org.bitcoinj.wallet.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.smartcolors.AddressableKeyChain;
+import org.smartcolors.ColorKeyChain;
 import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
@@ -46,6 +47,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     protected final ObjectMapper mapper;
     
     private final Map<Sha256Hash, Transaction> txs;
+    private final Set<Sha256Hash> pending;
     private final TxConfidenceTable confidenceTable;
     private BlockingQueue<StratumMessage> addressQueue;
     private ExecutorService addressChangeService;
@@ -61,6 +63,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
         confidenceTable = getContext().getConfidenceTable();
         this.client = client;
         txs = Maps.newConcurrentMap();
+        pending = Sets.newConcurrentHashSet();
         mapper = new ObjectMapper();
         eventListeners = new CopyOnWriteArrayList<>();
     }
@@ -97,6 +100,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
 
     @Override
     public void markKeysAsUsed(Transaction tx) {
+        wallet.lock();
         wallet.lockKeychain();
         try {
             KeyChainGroup group = wallet.getKeychain();
@@ -112,12 +116,14 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
             while (!currentKeys.equals(oldCurrentKeys)) {
                 for (Transaction oldTx : txs.values()) {
                     doMarkKeysAsUsed(oldTx, group);
+                    notifyTransaction(oldTx); // Tell listeners about this again, in case we discovered more outputs are ours
                 }
                 oldCurrentKeys = currentKeys;
                 currentKeys = getCurrentKeys(group);
             }
         } finally {
             wallet.unlockKeychain();
+            wallet.unlock();
         }
     }
 
@@ -147,6 +153,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
         List<Object> list = Lists.newArrayList();
         list.add(keychain.currentKey(KeyChain.KeyPurpose.RECEIVE_FUNDS));
         list.add(keychain.currentKey(KeyChain.KeyPurpose.CHANGE));
+        for (DeterministicKeyChain chain : keychain.getDeterministicKeyChains()) {
+            if (chain instanceof ColorKeyChain) {
+                ColorKeyChain ckc = (ColorKeyChain) chain;
+                list.add(ckc.currentKey(KeyChain.KeyPurpose.RECEIVE_FUNDS));
+                list.add(ckc.currentKey(KeyChain.KeyPurpose.CHANGE));
+            }
+        }
         return list;
     }
 
@@ -325,11 +338,12 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
                 }
 
                 log.info("got history of length {} for {}", history.size(), address);
-                List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
+                final List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
                 for (AddressHistoryItem item : history) {
                     Sha256Hash hash = Sha256Hash.wrap(item.txHash);
-                    if (txs.containsKey(hash))
-                        return;
+                    if (txs.containsKey(hash) || pending.contains(hash))
+                        continue;
+                    pending.add(hash);
                     futures.add(retrieveTransaction(hash, item.height));
                 }
                 ListenableFuture completeFuture = Futures.allAsList(futures);
@@ -338,7 +352,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
                     public void onSuccess(Object result) {
                         SettableFuture<Integer> settable = downloadFutures.get(address);
                         if (settable != null && !settable.isDone()) {
-                            settable.set(history.size());
+                            settable.set(futures.size());
                         }
                     }
 
@@ -373,11 +387,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
                 // FIXME check proof
                 Transaction tx = new Transaction(wallet.getParams(), Utils.HEX.decode(hex));
                 receive(tx, height);
+                pending.remove(hash);
             }
 
             @Override
             public void onFailure(@Nonnull Throwable t) {
                 log.error("failed to retrieve {}", hash);
+                pending.remove(hash);
             }
         });
         return future;
