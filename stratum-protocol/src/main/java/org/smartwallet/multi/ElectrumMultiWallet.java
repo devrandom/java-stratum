@@ -387,6 +387,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
         TransactionConfidence confidence = confidenceTable.getOrCreate(tx.getHash());
         confidence.setAppearedAtChainHeight(height);
         txs.put(tx.getHash(), tx);
+        tx.getConfidence(); // FIXME workaround to Context issue at Fetcher
         log.info("got tx {}", tx.getHashAsString());
         markKeysAsUsed(tx);
         notifyTransaction(tx);
