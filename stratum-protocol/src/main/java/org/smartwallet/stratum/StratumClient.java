@@ -41,7 +41,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     protected static Logger logger = LoggerFactory.getLogger("StratumClient");
     private static CycleDetectingLockFactory lockFactory = CycleDetectingLockFactory.newInstance(CycleDetectingLockFactory.Policies.DISABLED);
     protected final ObjectMapper mapper;
-    private final ConcurrentMap<Long, SettableFuture<StratumMessage>> calls;
+    private final ConcurrentMap<Long, PendingCall> calls;
     private final ReentrantLock lock;
     private final ConcurrentMap<String, BlockingQueue<StratumMessage>> subscriptions;
     private final NetworkParameters params;
@@ -55,6 +55,18 @@ public class StratumClient extends AbstractExecutionThreadService {
     private Map<Address, Long> subscribedAddresses;
     private long subscribedHeaders = 0;
     private Pinger pinger;
+    private boolean isQueue;
+
+    static class PendingCall {
+        final StratumMessage message;
+        final SettableFuture<StratumMessage> future;
+
+        PendingCall(StratumMessage message, SettableFuture<StratumMessage> future) {
+            this.message = message;
+            this.future = future;
+        }
+    }
+
     static ThreadFactory threadFactory =
             new ThreadFactoryBuilder()
                     .setDaemon(true)
@@ -228,7 +240,7 @@ public class StratumClient extends AbstractExecutionThreadService {
             }
             // Keep a copy of the socket so we don't close a new one due to race in onFailure
             final Socket mySocket = socket;
-            future = call("server.version", "JavaStratumClient 0.1");
+            future = call("server.version", Lists.<Object>newArrayList("JavaStratumClient 0.1"), false);
             Futures.addCallback(future, new FutureCallback<StratumMessage>() {
                 @Override
                 public void onSuccess(StratumMessage result) {
@@ -278,8 +290,8 @@ public class StratumClient extends AbstractExecutionThreadService {
         try {
             lock.lock();
             Exception e = new EOFException("shutting down");
-            for (SettableFuture<StratumMessage> value : calls.values()) {
-                value.setException(e);
+            for (PendingCall value : calls.values()) {
+                value.future.setException(e);
             }
             for (BlockingQueue<StratumMessage> queue : subscriptions.values()) {
                 try {
@@ -319,13 +331,6 @@ public class StratumClient extends AbstractExecutionThreadService {
     private void setConnected(boolean value) {
         lock.lock();
         isConnected = value;
-        if (!value) {
-            Exception e = new EOFException("reconnecting");
-            for (SettableFuture<StratumMessage> future : calls.values()) {
-                future.setException(e);
-            }
-            calls.clear();
-        }
         lock.unlock();
     }
 
@@ -334,11 +339,15 @@ public class StratumClient extends AbstractExecutionThreadService {
 
         try {
             for (Map.Entry<Address, Long> entry : subscribedAddresses.entrySet()) {
-                writeMessage("blockchain.address.subscribe", entry.getKey().toString(), entry.getValue());
+                writeMessage(makeMessage("blockchain.address.subscribe", entry.getKey().toString(), entry.getValue()));
             }
 
             if (subscribedHeaders > 0) {
-                writeMessage("blockchain.address.subscribe", null, subscribedHeaders);
+                writeMessage(makeMessage("blockchain.address.subscribe", null, subscribedHeaders));
+            }
+
+            for (PendingCall call : calls.values()) {
+                writeMessage(call.message);
             }
         } finally {
             lock.unlock();
@@ -369,16 +378,20 @@ public class StratumClient extends AbstractExecutionThreadService {
     public ListenableFuture<StratumMessage> call(String method, String param) {
         return call(method, Lists.<Object>newArrayList(param));
     }
-    
+
     public ListenableFuture<StratumMessage> call(String method, List<Object> params) {
+        return call(method, params, isQueue);
+    }
+
+    public ListenableFuture<StratumMessage> call(String method, List<Object> params, boolean doQueue) {
         StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
         try {
             lock.lock();
             if (!isRunning())
                 return null;
             SettableFuture<StratumMessage> future = SettableFuture.create();
-            calls.put(message.id, future);
-            if (isConnected) {
+            calls.put(message.id, new PendingCall(message, future));
+            if (isConnected && !doQueue) {
                 logger.info("> {}", mapper.writeValueAsString(message));
                 mapper.writeValue(outputStream, message);
                 outputStream.write('\n');
@@ -403,6 +416,10 @@ public class StratumClient extends AbstractExecutionThreadService {
         return subscribe("blockchain.headers.subscribe", null, id);
     }
 
+    public void setQueue(boolean isQueue) {
+        this.isQueue = isQueue;
+    }
+
     protected StratumSubscription subscribe(String method, String param, long id) {
         try {
             lock.lock();
@@ -410,18 +427,17 @@ public class StratumClient extends AbstractExecutionThreadService {
                 subscriptions.put(method, makeSubscriptionQueue());
             }
             SettableFuture<StratumMessage> future = SettableFuture.create();
-            calls.put(id, future);
-            if (isConnected)
-                writeMessage(method, param, id);
+            if (isConnected) {
+                StratumMessage message = makeMessage(method, param, id);
+                writeMessage(message);
+            }
             return new StratumSubscription(future, subscriptions.get(method));
         } finally {
             lock.unlock();
         }
     }
 
-    private void writeMessage(String method, String param, long id) {
-        ArrayList<Object> params = (param != null) ? Lists.<Object>newArrayList(param) : Lists.<Object>newArrayList();
-        StratumMessage message = new StratumMessage(id, method, params, mapper);
+    private void writeMessage(StratumMessage message) {
         try {
             logger.info("> {}", mapper.writeValueAsString(message));
             mapper.writeValue(outputStream, message);
@@ -432,17 +448,22 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
     }
 
+    private StratumMessage makeMessage(String method, String param, long id) {
+        ArrayList<Object> params = (param != null) ? Lists.<Object>newArrayList(param) : Lists.newArrayList();
+        return new StratumMessage(id, method, params, mapper);
+    }
+
     private ArrayBlockingQueue<StratumMessage> makeSubscriptionQueue() {
         return Queues.newArrayBlockingQueue(SUBSCRIPTION_QUEUE_CAPACITY);
     }
 
     protected void handleResult(StratumMessage message) {
-        SettableFuture<StratumMessage> future = calls.remove(message.id);
-        if (future == null) {
+        PendingCall call = calls.remove(message.id);
+        if (call == null) {
             logger.warn("reply for unknown id {}", message.id);
             return;
         }
-        future.set(message);
+        call.future.set(message);
     }
 
     protected void handleMessage(StratumMessage message) {
@@ -458,12 +479,12 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     private void handleError(StratumMessage message) {
-        SettableFuture<StratumMessage> future = calls.remove(message.id);
-        if (future == null) {
+        PendingCall call = calls.remove(message.id);
+        if (call == null) {
             logger.warn("reply for unknown id {}", message.id);
             return;
         }
-        future.setException(new StratumException(message.error));
+        call.future.setException(new StratumException(message.error));
     }
 
     protected void handleFatal(Exception e) {

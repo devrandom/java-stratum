@@ -17,10 +17,7 @@ import org.jboss.aesh.cl.Arguments;
 import org.jboss.aesh.cl.CommandDefinition;
 import org.jboss.aesh.cl.converter.Converter;
 import org.jboss.aesh.cl.validator.OptionValidatorException;
-import org.jboss.aesh.console.AeshConsole;
-import org.jboss.aesh.console.AeshConsoleBuilder;
-import org.jboss.aesh.console.Console;
-import org.jboss.aesh.console.Prompt;
+import org.jboss.aesh.console.*;
 import org.jboss.aesh.console.command.Command;
 import org.jboss.aesh.console.command.CommandResult;
 import org.jboss.aesh.console.command.converter.ConverterInvocation;
@@ -124,6 +121,7 @@ public class StratumCli {
                 .command(new HelpCommand())
                 .command(new SubscribeAddressCommand())
                 .command(new SubscribeHeadersCommand())
+                .command(new SetQueueCommand())
                 .create();
         Settings settings = new SettingsBuilder()
                 .logging(false)
@@ -201,6 +199,24 @@ public class StratumCli {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             simpleCall("server.banner");
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="setqueue", description = "set queue mode")
+    public class SetQueueCommand implements Command {
+        @Arguments(description = "values")
+        List<Boolean> values;
+
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            if (values == null || values.size() == 0)
+                client.setQueue(true);
+            else if (values.size() == 1)
+                client.setQueue(values.get(0));
+            else {
+                return CommandResult.FAILURE;
+            }
             return CommandResult.SUCCESS;
         }
     }
