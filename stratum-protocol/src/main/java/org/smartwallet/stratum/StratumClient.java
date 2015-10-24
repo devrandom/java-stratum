@@ -65,6 +65,21 @@ public class StratumClient extends AbstractExecutionThreadService {
             this.message = message;
             this.future = future;
         }
+
+        boolean isSubscriptionCall() {
+            return false;
+        }
+    }
+
+    static class PendingSubscription extends PendingCall {
+        PendingSubscription(StratumMessage message, SettableFuture<StratumMessage> future) {
+            super(message, future);
+        }
+
+        @Override
+        boolean isSubscriptionCall() {
+            return true;
+        }
     }
 
     static ThreadFactory threadFactory =
@@ -347,7 +362,9 @@ public class StratumClient extends AbstractExecutionThreadService {
             }
 
             for (PendingCall call : calls.values()) {
-                writeMessage(call.message);
+                // Subscriptions are reissued above
+                if (!call.isSubscriptionCall())
+                    writeMessage(call.message);
             }
         } finally {
             lock.unlock();
@@ -385,23 +402,19 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     public ListenableFuture<StratumMessage> call(String method, List<Object> params, boolean doQueue) {
         StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
+        SettableFuture<StratumMessage> future = SettableFuture.create();
         try {
             lock.lock();
             if (!isRunning())
                 return null;
-            SettableFuture<StratumMessage> future = SettableFuture.create();
             calls.put(message.id, new PendingCall(message, future));
             if (isConnected && !doQueue) {
-                logger.info("> {}", mapper.writeValueAsString(message));
-                mapper.writeValue(outputStream, message);
-                outputStream.write('\n');
+                writeMessage(message);
             }
-            return future;
-        } catch (IOException e) {
-            return Futures.immediateFailedFuture(e);
         } finally {
             lock.unlock();
         }
+        return future;
     }
 
     public StratumSubscription subscribe(Address address) {
@@ -427,8 +440,9 @@ public class StratumClient extends AbstractExecutionThreadService {
                 subscriptions.put(method, makeSubscriptionQueue());
             }
             SettableFuture<StratumMessage> future = SettableFuture.create();
+            StratumMessage message = makeMessage(method, param, id);
+            calls.put(id, new PendingSubscription(message, future));
             if (isConnected) {
-                StratumMessage message = makeMessage(method, param, id);
                 writeMessage(message);
             }
             return new StratumSubscription(future, subscriptions.get(method));
@@ -443,8 +457,8 @@ public class StratumClient extends AbstractExecutionThreadService {
             mapper.writeValue(outputStream, message);
             outputStream.write('\n');
         } catch (IOException e) {
-            logger.error("failed to write");
-            // TODO close
+            logger.error("failed to write, will retry after reconnect");
+            // This will be retried by the main loop when we reconnect
         }
     }
 
