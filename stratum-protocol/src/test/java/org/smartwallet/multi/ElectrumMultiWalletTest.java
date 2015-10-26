@@ -1,17 +1,16 @@
 package org.smartwallet.multi;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Queues;
+import com.google.common.util.concurrent.SettableFuture;
 import org.bitcoinj.core.*;
 import org.bitcoinj.crypto.DeterministicKey;
 import org.bitcoinj.testing.FakeTxBuilder;
 import org.bitcoinj.wallet.DeterministicKeyChain;
 import org.bitcoinj.wallet.DeterministicSeed;
 import org.bitcoinj.wallet.KeyChainGroup;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Queues;
-import com.google.common.util.concurrent.SettableFuture;
 import org.junit.Before;
 import org.junit.Test;
 import org.smartcolors.SmartWallet;
@@ -52,7 +51,8 @@ public class ElectrumMultiWalletTest {
         wallet.setKeychainLookaheadSize(10);
 
         client = createMock(StratumClient.class);
-        multiWallet = new ElectrumMultiWallet(wallet, client);
+        multiWallet = new ElectrumMultiWallet(wallet);
+        multiWallet.start(client);
     }
 
     @Test

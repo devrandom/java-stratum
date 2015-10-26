@@ -41,7 +41,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
     protected final SmartWallet wallet;
-    protected final StratumClient client;
+    protected StratumClient client;
     protected final ObjectMapper mapper;
     
     private final Map<Sha256Hash, Transaction> txs;
@@ -52,14 +52,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     private transient CopyOnWriteArrayList<ListenerRegistration<MultiWalletEventListener>> eventListeners;
 
     public ElectrumMultiWallet(SmartWallet wallet) {
-        this(wallet, new StratumClient(wallet.getNetworkParameters()));
-    }
-    
-    public ElectrumMultiWallet(SmartWallet wallet, StratumClient client) {
         super(wallet);
         this.wallet = wallet;
         confidenceTable = getContext().getConfidenceTable();
-        this.client = client;
         txs = Maps.newConcurrentMap();
         pending = Sets.newConcurrentHashSet();
         mapper = new ObjectMapper();
@@ -211,10 +206,27 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
         client.awaitRunning();
     }
 
+    void start(StratumClient mockClient) {
+        this.client = mockClient;
+    }
+
     @Override
     public void startAsync() {
         subscribeToKeys();
+        client = new StratumClient(wallet.getNetworkParameters());
         client.startAsync();
+    }
+
+    @Override
+    public void stopAsync() {
+        client.stopAsync();
+        client = null;
+    }
+
+    public void stop() {
+        client.startAsync();
+        client.awaitTerminated();
+        client = null;
     }
 
     @Override
