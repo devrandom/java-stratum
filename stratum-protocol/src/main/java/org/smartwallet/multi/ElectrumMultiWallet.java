@@ -32,6 +32,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 /**
  * Wrap a normal BitcoinJ SPV wallet
  * 
@@ -207,11 +210,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     }
 
     void start(StratumClient mockClient) {
+        checkState(client == null);
         this.client = mockClient;
     }
 
     @Override
     public void startAsync() {
+        checkState(client == null);
         subscribeToKeys();
         client = new StratumClient(wallet.getNetworkParameters());
         client.startAsync();
@@ -219,12 +224,14 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
 
     @Override
     public void stopAsync() {
+        checkNotNull(client);
         client.stopAsync();
         client = null;
     }
 
     public void stop() {
-        client.startAsync();
+        checkNotNull(client);
+        client.stopAsync();
         client.awaitTerminated();
         client = null;
     }
