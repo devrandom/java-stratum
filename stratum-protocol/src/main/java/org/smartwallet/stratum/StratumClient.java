@@ -433,6 +433,16 @@ public class StratumClient extends AbstractExecutionThreadService {
         this.isQueue = isQueue;
     }
 
+    /** Stop async without causing any network access on calling thread */
+    public void stopInBackground() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                stopAsync();
+            }
+        }).start();
+    }
+
     protected StratumSubscription subscribe(String method, String param, long id) {
         try {
             lock.lock();

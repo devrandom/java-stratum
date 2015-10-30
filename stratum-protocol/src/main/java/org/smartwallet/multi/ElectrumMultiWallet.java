@@ -217,21 +217,23 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     @Override
     public void startAsync() {
         checkState(client == null);
-        subscribeToKeys();
         client = new StratumClient(wallet.getNetworkParameters());
+        // This won't actually cause any network activity yet.  We prefer network activity on the stratum client thread,
+        // especially on Android.
+        subscribeToKeys();
         client.startAsync();
     }
 
     @Override
     public void stopAsync() {
         checkNotNull(client);
-        client.stopAsync();
+        client.stopInBackground();
         client = null;
     }
 
     public void stop() {
         checkNotNull(client);
-        client.stopAsync();
+        client.stopInBackground();
         client.awaitTerminated();
         client = null;
     }
