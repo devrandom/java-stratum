@@ -178,36 +178,50 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
     }
 
-    protected void createSocket() throws IOException {
+    protected void createSocket() {
+        // Lock here, so that caller will call isRunning after we create a new socket
+        // and fall out of the loop.  See also closeSocket - called from triggerShutdown.
+        lock.lock();
+        try {
+            if (isTls) {
+                try {
+                    SSLContext sc = SSLContext.getInstance("TLS");
+                    sc.init(null, new TrustManager[]{new TrustAllX509TrustManager()}, new SecureRandom());
+                    SocketFactory factory = sc.getSocketFactory();
+                    socket = factory.createSocket();
+                } catch (NoSuchAlgorithmException | KeyManagementException e) {
+                    Throwables.propagate(e);
+                }
+            } else {
+                socket = new Socket();
+            }
+        } catch (IOException e) {
+            // Shouldn't happen, we don't actually connect
+            Throwables.propagate(e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void connectSocket() throws IOException {
         // TODO use random, exponentially backoff from failed connections
         InetSocketAddress address = serverAddresses.remove(0);
         serverAddresses.add(address);
         // Force resolution
         address = new InetSocketAddress(address.getHostString(), address.getPort());
         logger.info("Opening a socket to " + address.getHostString() + ":" + address.getPort());
-        if (isTls) {
-            try {
-                SSLContext sc = SSLContext.getInstance("TLS");
-                sc.init(null, new TrustManager[]{new TrustAllX509TrustManager()}, new SecureRandom());
-                SocketFactory factory = sc.getSocketFactory();
-                socket = factory.createSocket();
-            } catch (NoSuchAlgorithmException | KeyManagementException e) {
-                Throwables.propagate(e);
-            }
-        } else {
-            socket = new Socket();
-        }
         socket.connect(address); // TODO timeout
     }
 
     @Override
     protected void startUp() throws Exception {
+        createSocket();
     }
 
     private void connect() throws IOException {
         logger.info("connect");
         pinger = new Pinger();
-        createSocket();
+        connectSocket();
         outputStream = socket.getOutputStream();
         reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         pinger.start();
@@ -226,6 +240,9 @@ public class StratumClient extends AbstractExecutionThreadService {
         }
 
         public void stop() {
+            // check if start was never called - e.g. due to an IOException
+            if (handle == null)
+                return;
             checkNotNull(handle);
             handle.cancel(true);
             if (future != null)
@@ -281,21 +298,22 @@ public class StratumClient extends AbstractExecutionThreadService {
     @Override
     protected void triggerShutdown() {
         logger.info("trigger shutdown");
-        disconnect();
+        closeSocket();
     }
 
     private void disconnect() {
-        logger.info("stop pinger");
-        pinger.stop();
-        logger.info("stopped pinger");
         closeSocket();
     }
 
     public void closeSocket() {
+        // See matching lock in createSocket
+        lock.lock();
         try {
             socket.close();
         } catch (IOException e) {
             logger.error("failed to close socket", e);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -304,6 +322,9 @@ public class StratumClient extends AbstractExecutionThreadService {
         logger.info("shutdown");
         try {
             lock.lock();
+            logger.info("stop pinger");
+            pinger.stop();
+            logger.info("stopped pinger");
             Exception e = new EOFException("shutting down");
             for (PendingCall value : calls.values()) {
                 value.future.setException(e);
@@ -332,13 +353,19 @@ public class StratumClient extends AbstractExecutionThreadService {
                 runClient();
                 setConnected(false);
                 disconnect();
+                createSocket();
             } catch (IOException e) {
+                logger.error("IOException", e);
                 setConnected(false);
                 if (isRunning()) {
-                    logger.error("IO exception, will reconnect");
+                    logger.error("will reconnect");
                     disconnect();
+                    createSocket();
                     Utils.sleep(3000 + new Random().nextInt(4000));
                 }
+            } catch (RuntimeException e) {
+                logger.error("RuntimeException", e);
+                throw e;
             }
         }
     }

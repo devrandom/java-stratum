@@ -234,8 +234,21 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     public void stop() {
         checkNotNull(client);
         client.stopInBackground();
-        client.awaitTerminated();
+        log.warn("state is {}", client.state());
+        safeAwaitTerminated();
         client = null;
+    }
+
+    private void safeAwaitTerminated() {
+        if (client.state() == Service.State.FAILED) {
+            log.error("client has previously failed", client.failureCause());
+        } else {
+            try {
+                client.awaitTerminated();
+            } catch (IllegalStateException e) {
+                log.error("client failed during stop", client.failureCause());
+            }
+        }
     }
 
     @Override
