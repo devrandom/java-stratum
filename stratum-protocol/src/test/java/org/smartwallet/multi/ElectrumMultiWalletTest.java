@@ -97,7 +97,9 @@ public class ElectrumMultiWalletTest {
         WalletProtobufSerializer.WalletFactory factory = new WalletProtobufSerializer.WalletFactory() {
             @Override
             public Wallet create(NetworkParameters params, KeyChainGroup keyChainGroup) {
-                return new SmartWallet(params, keyChainGroup);
+                SmartWallet wallet1 = new SmartWallet(params, keyChainGroup);
+                multiWallet = new ElectrumMultiWallet(wallet1);
+                return wallet1;
             }
         };
         WalletProtobufSerializer serializer = new WalletProtobufSerializer(factory);
@@ -105,11 +107,12 @@ public class ElectrumMultiWalletTest {
         serializer.writeWallet(wallet, bos);
         ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
 
-        // Deserialize
-        ElectrumMultiWallet multiWallet1 = new ElectrumMultiWallet(null);
-        Wallet wallet1 = serializer.readWallet(bis, multiWallet1);
-        assertEquals(1, multiWallet1.getTransactions().size());
-        Transaction tx1 = multiWallet1.getTransaction(tx.getHash());
+        // Deserialize - this will update multiWallet
+        ElectrumMultiWallet oldMultiWallet = multiWallet;
+        Wallet wallet1 = serializer.readWallet(bis);
+        assertNotEquals(oldMultiWallet, multiWallet);
+        assertEquals(1, multiWallet.getTransactions().size());
+        Transaction tx1 = multiWallet.getTransaction(tx.getHash());
 
         assertArrayEquals(tx1.bitcoinSerialize(), tx.bitcoinSerialize());
         assertEquals(ConfidenceType.BUILDING, tx1.getConfidence().getConfidenceType());

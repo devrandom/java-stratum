@@ -57,12 +57,15 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private ExecutorService addressChangeService;
     private transient CopyOnWriteArrayList<ListenerRegistration<MultiWalletEventListener>> eventListeners;
 
+    /**
+     * The constructor will add this object as an extension to the wallet.
+     *
+     * @param wallet
+     */
     public ElectrumMultiWallet(SmartWallet wallet) {
         super(wallet);
-        if (wallet != null) {
-            confidenceTable = getContext().getConfidenceTable();
-            wallet.addExtension(this);
-        }
+        confidenceTable = getContext().getConfidenceTable();
+        wallet.addExtension(this);
         txs = Maps.newConcurrentMap();
         pending = Sets.newConcurrentHashSet();
         mapper = new ObjectMapper();
@@ -405,7 +408,6 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             readConfidence(tx, transaction.getConfidence(), confidence);
             txs.put(tx.getHash(), tx);
         }
-        this.wallet = (SmartWallet) containingWallet;
         confidenceTable = getContext().getConfidenceTable();
     }
 
