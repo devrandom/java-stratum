@@ -13,8 +13,10 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.*;
 import com.google.protobuf.ByteString;
 import org.bitcoinj.core.*;
+import org.bitcoinj.core.TransactionConfidence.ConfidenceType;
 import org.bitcoinj.crypto.DeterministicKey;
 import org.bitcoinj.script.Script;
+import org.bitcoinj.store.UnreadableWalletException;
 import org.bitcoinj.utils.ListenerRegistration;
 import org.bitcoinj.utils.Threading;
 import org.bitcoinj.wallet.*;
@@ -24,6 +26,7 @@ import org.smartcolors.*;
 import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
 import org.smartwallet.stratum.StratumSubscription;
+import org.smartwallet.stratum.protos.Protos;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -32,7 +35,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
@@ -40,24 +42,27 @@ import static com.google.common.base.Preconditions.checkState;
  * 
  * Created by devrandom on 2015-09-08.
  */
-public class ElectrumMultiWallet extends SmartMultiWallet {
+public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExtension {
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
-    protected final SmartWallet wallet;
+    public static final String EXTENSION_ID = "org.smartcolors.electrum";
+
     protected StratumClient client;
     protected final ObjectMapper mapper;
     
     private final Map<Sha256Hash, Transaction> txs;
     private final Set<Sha256Hash> pending;
-    private final TxConfidenceTable confidenceTable;
+    private TxConfidenceTable confidenceTable;
     private BlockingQueue<StratumMessage> addressQueue;
     private ExecutorService addressChangeService;
     private transient CopyOnWriteArrayList<ListenerRegistration<MultiWalletEventListener>> eventListeners;
 
     public ElectrumMultiWallet(SmartWallet wallet) {
         super(wallet);
-        this.wallet = wallet;
-        confidenceTable = getContext().getConfidenceTable();
+        if (wallet != null) {
+            confidenceTable = getContext().getConfidenceTable();
+            wallet.addExtension(this);
+        }
         txs = Maps.newConcurrentMap();
         pending = Sets.newConcurrentHashSet();
         mapper = new ObjectMapper();
@@ -77,6 +82,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
     @Override
     public Set<Transaction> getTransactions() {
         return Sets.newHashSet(txs.values());
+    }
+
+    @Override
+    public Transaction getTransaction(Sha256Hash hash) {
+        return txs.get(hash);
     }
 
     @Override
@@ -226,13 +236,19 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
 
     @Override
     public void stopAsync() {
-        checkNotNull(client);
+        if (client == null) {
+            log.warn("already stopped");
+            return;
+        }
         client.stopInBackground();
         client = null;
     }
 
     public void stop() {
-        checkNotNull(client);
+        if (client == null) {
+            log.warn("already stopped");
+            return;
+        }
         client.stopInBackground();
         log.warn("state is {}", client.state());
         safeAwaitTerminated();
@@ -348,6 +364,88 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
         retrieveAddressHistory(address);
     }
 
+    @Override
+    public String getWalletExtensionID() {
+        return EXTENSION_ID;
+    }
+
+    @Override
+    public boolean isWalletExtensionMandatory() {
+        return false;
+    }
+
+    @Override
+    public byte[] serializeWalletExtension() {
+        Protos.Electrum.Builder extension = Protos.Electrum.newBuilder();
+        for (Transaction tx : txs.values()) {
+            TransactionConfidence confidence = tx.getConfidence();
+            Protos.TransactionConfidence.Builder confidenceBuilder = Protos.TransactionConfidence.newBuilder();
+            confidenceBuilder.setType(Protos.TransactionConfidence.Type.valueOf(confidence.getConfidenceType().getValue()));
+            if (confidence.getConfidenceType() == TransactionConfidence.ConfidenceType.BUILDING) {
+                confidenceBuilder.setAppearedAtHeight(confidence.getAppearedAtChainHeight());
+                confidenceBuilder.setDepth(confidence.getDepthInBlocks());
+            }
+
+            Protos.Transaction transaction =
+                    Protos.Transaction.newBuilder()
+                            .setConfidence(confidenceBuilder)
+                            .setTransaction(ByteString.copyFrom(tx.bitcoinSerialize()))
+                            .build();
+            extension.addTransactions(transaction);
+        }
+        return extension.build().toByteArray();
+    }
+
+    @Override
+    public void deserializeWalletExtension(Wallet containingWallet, byte[] data) throws Exception {
+        Protos.Electrum extension = Protos.Electrum.parseFrom(data);
+        for (Protos.Transaction transaction : extension.getTransactionsList()) {
+            Transaction tx = new Transaction(containingWallet.getNetworkParameters(), transaction.getTransaction().toByteArray());
+            TransactionConfidence confidence = tx.getConfidence();
+            readConfidence(tx, transaction.getConfidence(), confidence);
+            txs.put(tx.getHash(), tx);
+        }
+        this.wallet = (SmartWallet) containingWallet;
+        confidenceTable = getContext().getConfidenceTable();
+    }
+
+    private void readConfidence(Transaction tx, Protos.TransactionConfidence confidenceProto,
+                                TransactionConfidence confidence) throws UnreadableWalletException {
+        // We are lenient here because tx confidence is not an essential part of the wallet.
+        // If the tx has an unknown type of confidence, ignore.
+        if (!confidenceProto.hasType()) {
+            log.warn("Unknown confidence type for tx {}", tx.getHashAsString());
+            return;
+        }
+        ConfidenceType confidenceType;
+        switch (confidenceProto.getType()) {
+            case BUILDING: confidenceType = ConfidenceType.BUILDING; break;
+            case DEAD: confidenceType = ConfidenceType.DEAD; break;
+            // These two are equivalent (must be able to read old wallets).
+            case NOT_IN_BEST_CHAIN: confidenceType = ConfidenceType.PENDING; break;
+            case PENDING: confidenceType = ConfidenceType.PENDING; break;
+            case UNKNOWN:
+                // Fall through.
+            default:
+                confidenceType = ConfidenceType.UNKNOWN; break;
+        }
+        confidence.setConfidenceType(confidenceType);
+        if (confidenceProto.hasAppearedAtHeight()) {
+            if (confidence.getConfidenceType() != TransactionConfidence.ConfidenceType.BUILDING) {
+                log.warn("Have appearedAtHeight but not BUILDING for tx {}", tx.getHashAsString());
+                return;
+            }
+            confidence.setAppearedAtChainHeight(confidenceProto.getAppearedAtHeight());
+        }
+        if (confidenceProto.hasDepth()) {
+            if (confidence.getConfidenceType() != TransactionConfidence.ConfidenceType.BUILDING) {
+                log.warn("Have depth but not BUILDING for tx {}", tx.getHashAsString());
+                return;
+            }
+            confidence.setDepthInBlocks(confidenceProto.getDepth());
+        }
+    }
+
     static class AddressHistoryItem {
         @JsonProperty("tx_hash") public String txHash;
         
@@ -433,7 +531,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet {
 
     void receive(Transaction tx, int height) {
         TransactionConfidence confidence = confidenceTable.getOrCreate(tx.getHash());
-        confidence.setAppearedAtChainHeight(height);
+        if (height > 0)
+            confidence.setAppearedAtChainHeight(height);
         txs.put(tx.getHash(), tx);
         tx.getConfidence(); // FIXME workaround to Context issue at Fetcher
         log.info("got tx {}", tx.getHashAsString());

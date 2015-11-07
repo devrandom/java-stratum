@@ -4,9 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Queues;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import org.bitcoinj.core.*;
+import org.bitcoinj.core.TransactionConfidence.ConfidenceType;
 import org.bitcoinj.crypto.DeterministicKey;
+import org.bitcoinj.store.WalletProtobufSerializer;
 import org.bitcoinj.testing.FakeTxBuilder;
 import org.bitcoinj.wallet.DeterministicKeyChain;
 import org.bitcoinj.wallet.DeterministicSeed;
@@ -18,11 +22,13 @@ import org.smartwallet.stratum.StratumClient;
 import org.smartwallet.stratum.StratumMessage;
 import org.smartwallet.stratum.StratumSubscription;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.concurrent.BlockingQueue;
 
 import static org.easymock.EasyMock.*;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.*;
 
 /**
  * Created by devrandom on 2015-09-09.
@@ -60,21 +66,55 @@ public class ElectrumMultiWalletTest {
         ECKey key = new ECKey();
         String address = key.toAddress(params).toString();
         Transaction tx = new Transaction(params, Utils.HEX.decode(TEST_TX));
-        SettableFuture<StratumMessage> addressFuture = SettableFuture.create();
-        expect(client.call("blockchain.address.get_history", address)).andReturn(addressFuture);
-        SettableFuture<StratumMessage> txFuture = SettableFuture.create();
-        expect(client.call("blockchain.transaction.get", tx.getHashAsString()))
-                .andReturn(txFuture);
+        supplyTransactionForAddress(address, tx);
         replay(client);
         multiWallet.retrieveAddressHistory(address);
-        JsonNode historyResult = 
-                mapper.readTree("[{\"tx_hash\": \"" + tx.getHashAsString() + "\", \"height\": 340242}]");
-        addressFuture.set(new StratumMessage(1L, historyResult));
-        txFuture.set(new StratumMessage(2L, mapper.valueToTree(Utils.HEX.encode(tx.bitcoinSerialize()))));
         verify(client);
         assertEquals(1, multiWallet.getTransactions().size());
     }
-    
+
+    private void supplyTransactionForAddress(String address, Transaction tx) throws IOException {
+        JsonNode historyResult =
+                mapper.readTree("[{\"tx_hash\": \"" + tx.getHashAsString() + "\", \"height\": 340242}]");
+        ListenableFuture<StratumMessage> addressFuture = Futures.immediateFuture(new StratumMessage(1L, historyResult));
+        expect(client.call("blockchain.address.get_history", address)).andReturn(addressFuture);
+        ListenableFuture<StratumMessage> txFuture = Futures.immediateFuture(new StratumMessage(2L, mapper.valueToTree(Utils.HEX.encode(tx.bitcoinSerialize()))));
+        expect(client.call("blockchain.transaction.get", tx.getHashAsString()))
+                .andReturn(txFuture);
+    }
+
+    @Test
+    public void testSerialization() throws Exception {
+        ECKey key = new ECKey();
+        String address = key.toAddress(params).toString();
+        Transaction tx = new Transaction(params, Utils.HEX.decode(TEST_TX));
+        supplyTransactionForAddress(address, tx);
+        replay(client);
+        multiWallet.retrieveAddressHistory(address);
+        verify(client);
+
+        // Serialize
+        WalletProtobufSerializer.WalletFactory factory = new WalletProtobufSerializer.WalletFactory() {
+            @Override
+            public Wallet create(NetworkParameters params, KeyChainGroup keyChainGroup) {
+                return new SmartWallet(params, keyChainGroup);
+            }
+        };
+        WalletProtobufSerializer serializer = new WalletProtobufSerializer(factory);
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        serializer.writeWallet(wallet, bos);
+        ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
+
+        // Deserialize
+        ElectrumMultiWallet multiWallet1 = new ElectrumMultiWallet(null);
+        Wallet wallet1 = serializer.readWallet(bis, multiWallet1);
+        assertEquals(1, multiWallet1.getTransactions().size());
+        Transaction tx1 = multiWallet1.getTransaction(tx.getHash());
+
+        assertArrayEquals(tx1.bitcoinSerialize(), tx.bitcoinSerialize());
+        assertEquals(ConfidenceType.BUILDING, tx1.getConfidence().getConfidenceType());
+    }
+
     @Test
     public void testHandleAddressQueueItem() throws Exception {
         ECKey key = new ECKey();
