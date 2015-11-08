@@ -539,6 +539,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         tx.getConfidence(); // FIXME workaround to Context issue at Fetcher
         log.info("got tx {}", tx.getHashAsString());
         markKeysAsUsed(tx);
+        saveLater();
         notifyTransaction(tx);
     }
 
