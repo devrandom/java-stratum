@@ -59,6 +59,7 @@ public class StratumCli {
     private ExecutorService addressChangeService;
     private BlockingQueue<StratumMessage> headersChangeQueue;
     private ExecutorService headersChangeService;
+    private StratumChain chain;
 
     public static void main(String[] args) throws IOException {
         BriefLogFormatter.init();
@@ -106,7 +107,9 @@ public class StratumCli {
     private void run(List<InetSocketAddress> addresses) {
         mapper = new ObjectMapper();
         client = new StratumClient(params, addresses, true);
+        chain = new StratumChain(params, new File("stratum.chain"), client);
         client.startAsync();
+        chain.startAsync();
         CommandRegistry registry = new AeshCommandRegistryBuilder()
                 .command(new ExitCommand())
                 .command(new CloseCommand())
@@ -122,6 +125,7 @@ public class StratumCli {
                 .command(new SubscribeAddressCommand())
                 .command(new SubscribeHeadersCommand())
                 .command(new SetQueueCommand())
+                .command(new InfoCommand())
                 .create();
         Settings settings = new SettingsBuilder()
                 .logging(false)
@@ -170,6 +174,17 @@ public class StratumCli {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             client.startAsync();
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="info", description = "info")
+    public class InfoCommand implements Command {
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            println("height: " + chain.getStore().getHeight());
+            println("top: " + chain.getStore().top().getHash());
+            println(chain.getStore().top());
             return CommandResult.SUCCESS;
         }
     }
