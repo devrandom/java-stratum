@@ -2,6 +2,8 @@ package org.smartwallet.multi;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.Futures;
@@ -15,19 +17,20 @@ import org.bitcoinj.testing.FakeTxBuilder;
 import org.bitcoinj.wallet.DeterministicKeyChain;
 import org.bitcoinj.wallet.DeterministicSeed;
 import org.bitcoinj.wallet.KeyChainGroup;
+import org.easymock.EasyMock;
+import org.easymock.IMocksControl;
 import org.junit.Before;
 import org.junit.Test;
 import org.smartcolors.SmartWallet;
-import org.smartwallet.stratum.StratumClient;
-import org.smartwallet.stratum.StratumMessage;
-import org.smartwallet.stratum.StratumSubscription;
+import org.smartwallet.stratum.*;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.concurrent.BlockingQueue;
 
-import static org.easymock.EasyMock.*;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.isA;
 import static org.junit.Assert.*;
 
 /**
@@ -40,6 +43,9 @@ public class ElectrumMultiWalletTest {
     private StratumClient client;
     private ElectrumMultiWallet multiWallet;
     private ObjectMapper mapper;
+    private StratumChain stratumChain;
+    private HeadersStore store;
+    private IMocksControl control;
 
     @Before
     public void setUp() throws Exception {
@@ -56,9 +62,14 @@ public class ElectrumMultiWalletTest {
         wallet = new SmartWallet(params, group);
         wallet.setKeychainLookaheadSize(10);
 
-        client = createMock(StratumClient.class);
+        control = EasyMock.createStrictControl();
+        client = control.createMock(StratumClient.class);
+        store = control.createMock(HeadersStore.class);
+        stratumChain = control.createMock(StratumChain.class);
+        expect(stratumChain.getStore()).andStubReturn(store);
+        expect(store.get(340242)).andStubReturn(params.getGenesisBlock().cloneAsHeader());
         multiWallet = new ElectrumMultiWallet(wallet);
-        multiWallet.start(client);
+        multiWallet.start(client, stratumChain);
     }
 
     @Test
@@ -67,9 +78,9 @@ public class ElectrumMultiWalletTest {
         String address = key.toAddress(params).toString();
         Transaction tx = new Transaction(params, Utils.HEX.decode(TEST_TX));
         supplyTransactionForAddress(address, tx);
-        replay(client);
+        control.replay();
         multiWallet.retrieveAddressHistory(address);
-        verify(client);
+        control.verify();
         assertEquals(1, multiWallet.getTransactions().size());
     }
 
@@ -89,9 +100,9 @@ public class ElectrumMultiWalletTest {
         String address = key.toAddress(params).toString();
         Transaction tx = new Transaction(params, Utils.HEX.decode(TEST_TX));
         supplyTransactionForAddress(address, tx);
-        replay(client);
+        control.replay();
         multiWallet.retrieveAddressHistory(address);
-        verify(client);
+        control.verify();
 
         // Serialize
         WalletProtobufSerializer.WalletFactory factory = new WalletProtobufSerializer.WalletFactory() {
@@ -124,13 +135,24 @@ public class ElectrumMultiWalletTest {
         String address = key.toAddress(params).toString();
         SettableFuture<StratumMessage> addressFuture = SettableFuture.create();
         expect(client.call("blockchain.address.get_history", address)).andReturn(addressFuture);
-        replay(client);
+        control.replay();
         multiWallet.handleAddressQueueItem(
                 new StratumMessage(1L, "blockchain.address.subscribe",
-                        Lists.<Object>newArrayList(address), mapper));
-        verify(client);
+                        Lists.<Object>newArrayList(address), TextNode.valueOf("aaaa"), mapper));
+        control.verify();
     }
-    
+
+    @Test
+    public void testHandleAddressQueueItemNoHistory() throws Exception {
+        ECKey key = new ECKey();
+        String address = key.toAddress(params).toString();
+        control.replay();
+        multiWallet.handleAddressQueueItem(
+                new StratumMessage(1L, "blockchain.address.subscribe",
+                        Lists.<Object>newArrayList(address), NullNode.getInstance(), mapper));
+        control.verify();
+    }
+
     @Test
     public void testSubscribeToKeys() throws Exception {
         SettableFuture<StratumMessage> future = SettableFuture.create();
@@ -138,11 +160,11 @@ public class ElectrumMultiWalletTest {
         StratumSubscription subscription = new StratumSubscription(future, queue);
         expect(client.subscribe(isA(Address.class)))
                 .andReturn(subscription).times(26); // (10 + 3) * 2
-        replay(client);
+        control.replay();
         multiWallet.subscribeToKeys();
-        verify(client);
+        control.verify();
     }
-    
+
     @Test
     public void markKeysAsUsed() throws Exception {
         DeterministicKey key1 = wallet.currentReceiveKey();
@@ -160,12 +182,12 @@ public class ElectrumMultiWalletTest {
         DeterministicKey key1 = wallet.currentReceiveKey();
         String a1 = "mfsh3sGu8SzxRZXDRPMbwdCykDfdiXLTVQ";
         String a2 = "mpkchvF3Twgpd5AEmrRZM3TENT8V7Ygi8T";
-        
+
         Transaction tx1 = FakeTxBuilder.createFakeTx(params, Coin.CENT, new Address(params, a2));
         multiWallet.receive(tx1, 0);
         DeterministicKey key2 = wallet.currentReceiveKey();
         assertEquals(wallet.currentReceiveKey(), key1);
-        
+
         Transaction tx2 = FakeTxBuilder.createFakeTx(params, Coin.CENT, new Address(params, a1));
         multiWallet.receive(tx2, 0);
         assertNotEquals(wallet.currentReceiveKey(), key2);

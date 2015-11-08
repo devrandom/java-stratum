@@ -18,11 +18,12 @@ import java.util.concurrent.*;
  */
 public class StratumChain extends AbstractExecutionThreadService {
     protected static Logger log = LoggerFactory.getLogger("StratumChain");
-    private final HeadersStore store;
-    private final BlockingQueue<StratumMessage> queue;
+    private HeadersStore store;
+    private BlockingQueue<StratumMessage> queue;
     private final NetworkParameters params;
     private final StratumClient client;
-    private long remoteHeight;
+    private final CopyOnWriteArrayList<Listener> listeners;
+    private final File file;
     static ThreadFactory threadFactory =
             new ThreadFactoryBuilder()
                     .setDaemon(true)
@@ -33,13 +34,19 @@ public class StratumChain extends AbstractExecutionThreadService {
                         }
                     }).build();
 
+    public void addChainListener(Listener listener) {
+        listeners.add(listener);
+    }
+
+    public interface Listener {
+        void onHeight(long height, Block block);
+    }
 
     public StratumChain(NetworkParameters params, File file, StratumClient client) {
         this.params = params;
         this.client = client;
-        store = new HeadersStore(params, file);
-        store.verifyLast();
-        queue = client.subscribeToHeaders().queue;
+        this.file = file;
+        listeners = new CopyOnWriteArrayList<>();
     }
 
     public HeadersStore getStore() {
@@ -48,6 +55,7 @@ public class StratumChain extends AbstractExecutionThreadService {
 
     public void close() {
         stopAsync();
+        awaitTerminated();
     }
 
     @Override
@@ -62,6 +70,10 @@ public class StratumChain extends AbstractExecutionThreadService {
 
     @Override
     protected void run() throws Exception {
+        store = new HeadersStore(params, file);
+        store.verifyLast();
+        queue = client.subscribeToHeaders().queue;
+
         while (true) {
             StratumMessage item = queue.take();
             if (item.isSentinel())
@@ -72,6 +84,9 @@ public class StratumChain extends AbstractExecutionThreadService {
             try {
                 if (download(height - 1) && store.getHeight() == height - 1) {
                     store.add(block);
+                }
+                for (Listener listener : listeners) {
+                    listener.onHeight(height, block);
                 }
             } catch (CancellationException | ExecutionException e) {
                 log.error("failed to download chain at height {}", height-1);

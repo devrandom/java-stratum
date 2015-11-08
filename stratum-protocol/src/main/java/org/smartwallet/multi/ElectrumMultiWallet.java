@@ -23,16 +23,13 @@ import org.bitcoinj.wallet.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.smartcolors.*;
-import org.smartwallet.stratum.StratumClient;
-import org.smartwallet.stratum.StratumMessage;
-import org.smartwallet.stratum.StratumSubscription;
+import org.smartwallet.stratum.*;
 import org.smartwallet.stratum.protos.Protos;
 
 import javax.annotation.Nonnull;
+import java.io.File;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.*;
 
 import static com.google.common.base.Preconditions.checkState;
@@ -42,7 +39,7 @@ import static com.google.common.base.Preconditions.checkState;
  * 
  * Created by devrandom on 2015-09-08.
  */
-public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExtension {
+public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExtension, StratumChain.Listener {
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
     public static final String EXTENSION_ID = "org.smartcolors.electrum";
@@ -52,11 +49,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     protected final ObjectMapper mapper;
     
     private final Map<Sha256Hash, Transaction> txs;
-    private final Set<Sha256Hash> pending;
+    private final Set<Sha256Hash> pendingDownload;
+    private SortedSet<TransactionWithHeight> pendingBlock;
     private TxConfidenceTable confidenceTable;
     private BlockingQueue<StratumMessage> addressQueue;
     private ExecutorService addressChangeService;
     private transient CopyOnWriteArrayList<ListenerRegistration<MultiWalletEventListener>> eventListeners;
+    private StratumChain chain;
 
     /**
      * The constructor will add this object as an extension to the wallet.
@@ -68,7 +67,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         confidenceTable = getContext().getConfidenceTable();
         wallet.addExtension(this);
         txs = Maps.newConcurrentMap();
-        pending = Sets.newConcurrentHashSet();
+        pendingDownload = Sets.newConcurrentHashSet();
+        pendingBlock = Sets.newTreeSet();
         mapper = new ObjectMapper();
         eventListeners = new CopyOnWriteArrayList<>();
     }
@@ -215,18 +215,22 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         client.awaitRunning();
     }
 
-    void start(StratumClient mockClient) {
+    void start(StratumClient mockClient, StratumChain mockChain) {
         checkState(client == null);
-        this.client = mockClient;
+        client = mockClient;
+        chain = mockChain;
     }
 
     @Override
     public void startAsync() {
         checkState(client == null);
         client = new StratumClient(wallet.getNetworkParameters());
+        chain = new StratumChain(wallet.getNetworkParameters(), new File("electrum.chain"), client);
+        chain.addChainListener(this);
         // This won't actually cause any network activity yet.  We prefer network activity on the stratum client thread,
         // especially on Android.
         subscribeToKeys();
+        chain.startAsync();
         client.startAsync();
     }
 
@@ -236,6 +240,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             log.warn("already stopped");
             return;
         }
+        chain.stopAsync();
+        chain = null;
         client.stopInBackground();
         client = null;
     }
@@ -245,6 +251,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             log.warn("already stopped");
             return;
         }
+        chain.stopAsync();
+        chain = null;
         client.stopInBackground();
         log.warn("state is {}", client.state());
         safeAwaitTerminated();
@@ -458,9 +466,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 final List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
                 for (AddressHistoryItem item : history) {
                     Sha256Hash hash = Sha256Hash.wrap(item.txHash);
-                    if (txs.containsKey(hash) || pending.contains(hash))
+                    if (txs.containsKey(hash) || pendingDownload.contains(hash))
                         continue;
-                    pending.add(hash);
+                    pendingDownload.add(hash);
                     futures.add(retrieveTransaction(hash, item.height));
                 }
                 ListenableFuture completeFuture = Futures.allAsList(futures);
@@ -504,24 +512,58 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 // FIXME check proof
                 Transaction tx = new Transaction(wallet.getParams(), Utils.HEX.decode(hex));
                 receive(tx, height);
-                pending.remove(hash);
             }
 
             @Override
             public void onFailure(@Nonnull Throwable t) {
                 log.error("failed to retrieve {}", hash);
-                pending.remove(hash);
+                pendingDownload.remove(hash);
             }
         });
         return future;
     }
 
+    @Override
+    public void onHeight(long height, Block block) {
+        wallet.lock();
+        try {
+            while (!pendingBlock.isEmpty()) {
+                TransactionWithHeight first = pendingBlock.first();
+                if (first.height > height) break;
+                Transaction tx = first.tx;
+                tx.setUpdateTime(block.getTime());
+                tx.getConfidence().setAppearedAtChainHeight((int)height);
+                txs.put(tx.getHash(), tx);
+                pendingDownload.remove(tx.getHash());
+            }
+        } finally {
+            wallet.unlock();
+        }
+    }
+
     void receive(Transaction tx, int height) {
-        TransactionConfidence confidence = confidenceTable.getOrCreate(tx.getHash());
-        if (height > 0)
-            confidence.setAppearedAtChainHeight(height);
-        txs.put(tx.getHash(), tx);
-        tx.getConfidence(); // FIXME workaround to Context issue at Fetcher
+        // This is also a workaround to Context issue at Fetcher
+        TransactionConfidence confidence = tx.getConfidence(confidenceTable);
+
+        wallet.lock();
+        try {
+            if (height > 0) {
+                Block block = chain.getStore().get(height);
+                if (block == null) {
+                    pendingBlock.add(new TransactionWithHeight(tx, height));
+                } else {
+                    pendingDownload.remove(tx.getHash());
+                    tx.setUpdateTime(block.getTime());
+                    confidence.setAppearedAtChainHeight(height);
+                    txs.put(tx.getHash(), tx);
+                }
+            } else {
+                pendingDownload.remove(tx.getHash());
+                txs.put(tx.getHash(), tx);
+            }
+        } finally {
+            wallet.unlock();
+        }
         log.info("got tx {}", tx.getHashAsString());
         markKeysAsUsed(tx);
         saveLater();
