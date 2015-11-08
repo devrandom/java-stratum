@@ -38,6 +38,7 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class StratumClient extends AbstractExecutionThreadService {
     public static final int SUBSCRIPTION_QUEUE_CAPACITY = 10;
+    public static final int PING_PERIOD = 60;
     protected static Logger logger = LoggerFactory.getLogger("StratumClient");
     private static CycleDetectingLockFactory lockFactory = CycleDetectingLockFactory.newInstance(CycleDetectingLockFactory.Policies.DISABLED);
     protected final ObjectMapper mapper;
@@ -236,7 +237,7 @@ public class StratumClient extends AbstractExecutionThreadService {
 
         public void start() {
             checkState(handle == null);
-            handle = scheduler.scheduleAtFixedRate(this, 0, 10, TimeUnit.SECONDS);
+            handle = scheduler.scheduleAtFixedRate(this, 0, PING_PERIOD, TimeUnit.SECONDS);
         }
 
         public void stop() {
@@ -385,7 +386,7 @@ public class StratumClient extends AbstractExecutionThreadService {
             }
 
             if (subscribedHeaders > 0) {
-                writeMessage(makeMessage("blockchain.address.subscribe", null, subscribedHeaders));
+                writeMessage(makeMessage("blockchain.headers.subscribe", null, subscribedHeaders));
             }
 
             for (PendingCall call : calls.values()) {
@@ -423,6 +424,10 @@ public class StratumClient extends AbstractExecutionThreadService {
         return call(method, Lists.<Object>newArrayList(param));
     }
 
+    public ListenableFuture<StratumMessage> call(String method, long param) {
+        return call(method, Lists.<Object>newArrayList(param));
+    }
+
     public ListenableFuture<StratumMessage> call(String method, List<Object> params) {
         return call(method, params, isQueue);
     }
@@ -430,8 +435,8 @@ public class StratumClient extends AbstractExecutionThreadService {
     public ListenableFuture<StratumMessage> call(String method, List<Object> params, boolean doQueue) {
         StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
         SettableFuture<StratumMessage> future = SettableFuture.create();
+        lock.lock();
         try {
-            lock.lock();
             if (!isRunning())
                 return null;
             calls.put(message.id, new PendingCall(message, future));
@@ -515,6 +520,11 @@ public class StratumClient extends AbstractExecutionThreadService {
             return;
         }
         call.future.set(message);
+        // Pass subscription result through queue also
+        if (call.message.method.endsWith(".subscribe")) {
+            message.method = call.message.method;
+            handleMessage(message);
+        }
     }
 
     protected void handleMessage(StratumMessage message) {

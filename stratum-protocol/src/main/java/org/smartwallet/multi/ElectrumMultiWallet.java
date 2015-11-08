@@ -304,21 +304,6 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             StratumSubscription subscription = client.subscribe(address);
             addressQueue = subscription.queue;
             listenToAddressQueue();
-            Futures.addCallback(subscription.future, new FutureCallback<StratumMessage>() {
-                @Override
-                public void onSuccess(StratumMessage result) {
-                    if (result.result.isNull()) {
-                        downloadFutures.get(addressString).set(0);
-                    } else {
-                        retrieveAddressHistory(addressString);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    downloadFutures.get(addressString).setException(t);
-                }
-            });
         }
     }
 
@@ -357,7 +342,14 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             log.error("got address subscription update with no address");
             return;
         }
-        retrieveAddressHistory(address);
+        if (item.result.isNull()) {
+            SettableFuture<Integer> future = downloadFutures.get(address);
+            if (future != null && !future.isDone()) {
+                future.set(0);
+            }
+        } else {
+            retrieveAddressHistory(address);
+        }
     }
 
     @Override
