@@ -46,6 +46,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
     public static final String EXTENSION_ID = "org.smartcolors.electrum";
+    private static final Map<Sha256Hash, Transaction> EMPTY_POOL = Maps.newHashMap();
 
     protected StratumClient client;
     protected final ObjectMapper mapper;
@@ -94,17 +95,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @Override
     public Map<Sha256Hash, Transaction> getTransactionPool(WalletTransaction.Pool pool) {
-        // TODO handle other pools?
-        if (pool == WalletTransaction.Pool.PENDING)
-            return Maps.newHashMap(); // FIXME
-        if (pool != WalletTransaction.Pool.UNSPENT)
-            throw new UnsupportedOperationException();
-        List<TransactionOutput> candidates = calculateAllSpendCandidates(true, false);
-        Map<Sha256Hash, Transaction> res = Maps.newHashMap();
-        for (TransactionOutput output : candidates) {
-            res.put(output.getParentTransactionHash(), output.getParentTransaction());
-        }
-        return res;
+        if (pool == WalletTransaction.Pool.UNSPENT)
+            return txs;
+        return EMPTY_POOL;
     }
 
     @Override
