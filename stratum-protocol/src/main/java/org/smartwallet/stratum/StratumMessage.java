@@ -35,18 +35,20 @@ public class StratumMessage {
 
     @JsonIgnore
     public StratumMessage(Long id, String method, List<Object> params, ObjectMapper mapper) {
-        this(id, method, params, null, mapper);
-    }
-
-    @JsonIgnore
-    public StratumMessage(Long id, String method, List<Object> params, JsonNode result, ObjectMapper mapper) {
         this.id = id;
         this.method = method;
         this.params = Lists.newArrayList();
-        this.result = result;
         for (Object param : params) {
             this.params.add(mapper.valueToTree(param));
         }
+    }
+
+    @JsonIgnore
+    public StratumMessage(Long id, String method, List<JsonNode> params, JsonNode result, ObjectMapper mapper) {
+        this.id = id;
+        this.method = method;
+        this.params = params;
+        this.result = result;
     }
 
     @JsonIgnore

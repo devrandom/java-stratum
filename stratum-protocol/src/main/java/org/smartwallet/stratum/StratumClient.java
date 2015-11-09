@@ -261,8 +261,9 @@ public class StratumClient extends AbstractExecutionThreadService {
         public void run() {
             try {
                 doRun();
-            } catch (InterruptedException | IOException e) {
-                Throwables.propagate(e);
+            } catch (Throwable t) {
+                logger.error("pinger", t);
+                Throwables.propagate(t);
             }
         }
 
@@ -364,9 +365,9 @@ public class StratumClient extends AbstractExecutionThreadService {
                     createSocket();
                     Utils.sleep(3000 + new Random().nextInt(4000));
                 }
-            } catch (RuntimeException e) {
-                logger.error("RuntimeException", e);
-                throw e;
+            } catch (Throwable t) {
+                logger.error("client", t);
+                Throwables.propagate(t);
             }
         }
     }
@@ -449,12 +450,28 @@ public class StratumClient extends AbstractExecutionThreadService {
         return future;
     }
 
+    /**
+     * Subscription call result will be passed into the result queue, with
+     * the original subscription params [address] in message.params and the result
+     * in message.result.
+     *
+     * Subscription messages will then be passed into the result queue.
+     *
+     * @return a subscription, with a future and a message queue
+     */
     public StratumSubscription subscribe(Address address) {
         long id = currentId.getAndIncrement();
         subscribedAddresses.put(address, id);
         return subscribe("blockchain.address.subscribe", address.toString(), id);
     }
 
+    /**
+     * Subscription call result will be passed into the result queue.
+     *
+     * Subscription messages will then be passed into the result queue.
+     *
+     * @return a subscription, with a future and a message queue
+     */
     public StratumSubscription subscribeToHeaders() {
         long id = currentId.getAndIncrement();
         subscribedHeaders = id;
@@ -479,7 +496,7 @@ public class StratumClient extends AbstractExecutionThreadService {
         try {
             lock.lock();
             if (!subscriptions.containsKey(method)) {
-                subscriptions.put(method, makeSubscriptionQueue());
+                subscriptions.putIfAbsent(method, makeSubscriptionQueue());
             }
             SettableFuture<StratumMessage> future = SettableFuture.create();
             StratumMessage message = makeMessage(method, param, id);
@@ -522,8 +539,9 @@ public class StratumClient extends AbstractExecutionThreadService {
         call.future.set(message);
         // Pass subscription result through queue also
         if (call.message.method.endsWith(".subscribe")) {
-            message.method = call.message.method;
-            handleMessage(message);
+            StratumMessage message1 =
+                    new StratumMessage(null, call.message.method, call.message.params, message.result, mapper);
+            handleMessage(message1);
         }
     }
 

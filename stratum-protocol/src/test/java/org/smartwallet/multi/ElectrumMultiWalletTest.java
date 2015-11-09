@@ -27,6 +27,7 @@ import org.smartwallet.stratum.*;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.concurrent.BlockingQueue;
 
 import static org.easymock.EasyMock.expect;
@@ -136,9 +137,11 @@ public class ElectrumMultiWalletTest {
         SettableFuture<StratumMessage> addressFuture = SettableFuture.create();
         expect(client.call("blockchain.address.get_history", address)).andReturn(addressFuture);
         control.replay();
+        ArrayList<JsonNode> params = Lists.newArrayList();
+        params.add(TextNode.valueOf(address));
         multiWallet.handleAddressQueueItem(
                 new StratumMessage(1L, "blockchain.address.subscribe",
-                        Lists.<Object>newArrayList(address), TextNode.valueOf("aaaa"), mapper));
+                        params, TextNode.valueOf("aaaa"), mapper));
         control.verify();
     }
 
@@ -149,7 +152,7 @@ public class ElectrumMultiWalletTest {
         control.replay();
         multiWallet.handleAddressQueueItem(
                 new StratumMessage(1L, "blockchain.address.subscribe",
-                        Lists.<Object>newArrayList(address), NullNode.getInstance(), mapper));
+                        Lists.newArrayList(TextNode.valueOf(address)), NullNode.getInstance(), mapper));
         control.verify();
     }
 

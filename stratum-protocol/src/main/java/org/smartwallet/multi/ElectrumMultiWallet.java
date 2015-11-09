@@ -315,9 +315,20 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         }
     }
 
+    static ThreadFactory historyThreadFactory =
+            new ThreadFactoryBuilder()
+                    .setDaemon(true)
+                    .setNameFormat("address-%d")
+                    .setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                        @Override
+                        public void uncaughtException(Thread t, Throwable e) {
+                            log.error("uncaught exception", e);
+                        }
+                    }).build();
+
     private void listenToAddressQueue() {
         if (addressChangeService == null) {
-            addressChangeService = Executors.newSingleThreadExecutor();
+            addressChangeService = Executors.newSingleThreadExecutor(historyThreadFactory);
             addressChangeService.submit(new Runnable() {
                 @Override
                 public void run() {
@@ -330,8 +341,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                             }
                             log.info(mapper.writeValueAsString(item));
                             handleAddressQueueItem(item);
-                        } catch (InterruptedException | JsonProcessingException e) {
-                            throw Throwables.propagate(e);
+                        } catch (Throwable t) {
+                            log.error("address change service", t);
+                            throw Throwables.propagate(t);
                         }
                     }
                 }
