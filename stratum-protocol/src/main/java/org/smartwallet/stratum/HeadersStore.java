@@ -43,7 +43,8 @@ public class HeadersStore {
             }
             channel.position(0);
             if (channel.size() == 0) {
-                add(params.getGenesisBlock().cloneAsHeader());
+                Block genesis = params.getGenesisBlock().cloneAsHeader();
+                channel.write(ByteBuffer.wrap(genesis.bitcoinSerialize()), channel.size());
             }
         } catch (IOException e) {
             if (randomFile != null)
