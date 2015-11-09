@@ -367,7 +367,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @Override
     public boolean isWalletExtensionMandatory() {
-        return false;
+        return true;
     }
 
     @Override
