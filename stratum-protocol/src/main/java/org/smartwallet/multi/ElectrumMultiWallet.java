@@ -513,6 +513,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @VisibleForTesting
     SettableFuture<Transaction> addPendingDownload(Sha256Hash hash) {
+        log.info("pending {}", hash);
         SettableFuture<Transaction> future = SettableFuture.create();
         SettableFuture<Transaction> existing = pendingDownload.putIfAbsent(hash, future);
         if (existing != null)
@@ -552,11 +553,14 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             while (!pendingBlock.isEmpty()) {
                 TransactionWithHeight first = pendingBlock.first();
                 if (first.height > height) break;
+                pendingBlock.remove(first);
                 Transaction tx = first.tx;
                 tx.setUpdateTime(block.getTime());
                 tx.getConfidence().setAppearedAtChainHeight((int)height);
                 txs.put(tx.getHash(), tx);
-                pendingDownload.remove(tx.getHash()).set(tx);
+                log.info("reached block for {}", tx.getHash());
+                SettableFuture<Transaction> future = pendingDownload.remove(tx.getHash());
+                future.set(tx);
             }
         } finally {
             wallet.unlock();
@@ -574,12 +578,14 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 if (block == null) {
                     pendingBlock.add(new TransactionWithHeight(tx, height));
                 } else {
+                    log.info("have block for {}", tx.getHash());
                     pendingDownload.remove(tx.getHash()).set(tx);
                     tx.setUpdateTime(block.getTime());
                     confidence.setAppearedAtChainHeight(height);
                     txs.put(tx.getHash(), tx);
                 }
             } else {
+                log.info("unconfirmed {}", tx.getHash());
                 pendingDownload.remove(tx.getHash()).set(tx);
                 txs.put(tx.getHash(), tx);
             }
