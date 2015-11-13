@@ -99,7 +99,7 @@ public class StratumChain extends AbstractExecutionThreadService {
     private boolean download(long height) throws InterruptedException, CancellationException, ExecutionException {
         while (height > store.getHeight() + 50) {
             long index = (store.getHeight() + 1) / NetworkParameters.INTERVAL;
-            log.info("at chunk {}", index);
+            log.info("at chunk height {}", index * NetworkParameters.INTERVAL);
             ListenableFuture<StratumMessage> future = client.call("blockchain.block.get_chunk", index);
             StratumMessage item = future.get();
             long chunkHeight = index * NetworkParameters.INTERVAL;

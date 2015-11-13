@@ -172,10 +172,12 @@ public class ElectrumMultiWalletTest {
     public void markKeysAsUsed() throws Exception {
         DeterministicKey key1 = wallet.currentReceiveKey();
         Transaction tx1 = FakeTxBuilder.createFakeTx(params, Coin.CENT, key1.toAddress(params));
+        multiWallet.addPendingDownload(tx1.getHash());
         multiWallet.receive(tx1, 0);
         DeterministicKey key2 = wallet.currentReceiveKey();
         assertNotEquals(wallet.currentReceiveKey(), key1);
         Transaction tx2 = FakeTxBuilder.createFakeTx(params, Coin.CENT, key2.toAddress(params));
+        multiWallet.addPendingDownload(tx2.getHash());
         multiWallet.receive(tx2, 0);
         assertNotEquals(wallet.currentReceiveKey(), key2);
     }
@@ -187,11 +189,13 @@ public class ElectrumMultiWalletTest {
         String a2 = "mpkchvF3Twgpd5AEmrRZM3TENT8V7Ygi8T";
 
         Transaction tx1 = FakeTxBuilder.createFakeTx(params, Coin.CENT, new Address(params, a2));
+        multiWallet.addPendingDownload(tx1.getHash());
         multiWallet.receive(tx1, 0);
         DeterministicKey key2 = wallet.currentReceiveKey();
         assertEquals(wallet.currentReceiveKey(), key1);
 
         Transaction tx2 = FakeTxBuilder.createFakeTx(params, Coin.CENT, new Address(params, a1));
+        multiWallet.addPendingDownload(tx2.getHash());
         multiWallet.receive(tx2, 0);
         assertNotEquals(wallet.currentReceiveKey(), key2);
         assertNotEquals(wallet.currentReceiveKey().toAddress(params), a1);

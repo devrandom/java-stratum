@@ -49,7 +49,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     protected final ObjectMapper mapper;
     
     private final Map<Sha256Hash, Transaction> txs;
-    private final Set<Sha256Hash> pendingDownload;
+    private final ConcurrentMap<Sha256Hash, SettableFuture<Transaction>> pendingDownload;
     private SortedSet<TransactionWithHeight> pendingBlock;
     private TxConfidenceTable confidenceTable;
     private BlockingQueue<StratumMessage> addressQueue;
@@ -67,7 +67,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         confidenceTable = getContext().getConfidenceTable();
         wallet.addExtension(this);
         txs = Maps.newConcurrentMap();
-        pendingDownload = Sets.newConcurrentHashSet();
+        pendingDownload = Maps.newConcurrentMap();
         pendingBlock = Sets.newTreeSet();
         mapper = new ObjectMapper();
         eventListeners = new CopyOnWriteArrayList<>();
@@ -475,13 +475,14 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 }
 
                 log.info("got history of length {} for {}", history.size(), address);
-                final List<ListenableFuture<StratumMessage>> futures = Lists.newArrayList();
+                final List<ListenableFuture<Transaction>> futures = Lists.newArrayList();
                 for (AddressHistoryItem item : history) {
                     Sha256Hash hash = Sha256Hash.wrap(item.txHash);
-                    if (txs.containsKey(hash) || pendingDownload.contains(hash))
+                    if (txs.containsKey(hash) || pendingDownload.containsKey(hash))
                         continue;
-                    pendingDownload.add(hash);
-                    futures.add(retrieveTransaction(hash, item.height));
+                    SettableFuture<Transaction> future = addPendingDownload(hash);
+                    retrieveTransaction(hash, item.height);
+                    futures.add(future);
                 }
                 ListenableFuture completeFuture = Futures.allAsList(futures);
                 Futures.addCallback(completeFuture, new FutureCallback() {
@@ -511,9 +512,19 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     }
 
     @VisibleForTesting
-    ListenableFuture<StratumMessage> retrieveTransaction(final Sha256Hash hash, final int height) {
-        ListenableFuture<StratumMessage> future = client.call("blockchain.transaction.get", hash.toString());
-        Futures.addCallback(future, new FutureCallback<StratumMessage>() {
+    SettableFuture<Transaction> addPendingDownload(Sha256Hash hash) {
+        SettableFuture<Transaction> future = SettableFuture.create();
+        SettableFuture<Transaction> existing = pendingDownload.putIfAbsent(hash, future);
+        if (existing != null)
+            return existing;
+        return future;
+    }
+
+    @VisibleForTesting
+    void retrieveTransaction(final Sha256Hash hash,
+                             final int height) {
+        ListenableFuture<StratumMessage> getFuture = client.call("blockchain.transaction.get", hash.toString());
+        Futures.addCallback(getFuture, new FutureCallback<StratumMessage>() {
             @Override
             public void onSuccess(StratumMessage result) {
                 String hex = result.result.asText();
@@ -529,10 +540,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             @Override
             public void onFailure(@Nonnull Throwable t) {
                 log.error("failed to retrieve {}", hash);
-                pendingDownload.remove(hash);
+                pendingDownload.remove(hash).setException(t);
             }
         });
-        return future;
     }
 
     @Override
@@ -546,7 +556,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 tx.setUpdateTime(block.getTime());
                 tx.getConfidence().setAppearedAtChainHeight((int)height);
                 txs.put(tx.getHash(), tx);
-                pendingDownload.remove(tx.getHash());
+                pendingDownload.remove(tx.getHash()).set(tx);
             }
         } finally {
             wallet.unlock();
@@ -564,13 +574,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 if (block == null) {
                     pendingBlock.add(new TransactionWithHeight(tx, height));
                 } else {
-                    pendingDownload.remove(tx.getHash());
+                    pendingDownload.remove(tx.getHash()).set(tx);
                     tx.setUpdateTime(block.getTime());
                     confidence.setAppearedAtChainHeight(height);
                     txs.put(tx.getHash(), tx);
                 }
             } else {
-                pendingDownload.remove(tx.getHash());
+                pendingDownload.remove(tx.getHash()).set(tx);
                 txs.put(tx.getHash(), tx);
             }
         } finally {
