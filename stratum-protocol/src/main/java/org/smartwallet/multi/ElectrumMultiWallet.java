@@ -555,8 +555,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 if (first.height > height) break;
                 pendingBlock.remove(first);
                 Transaction tx = first.tx;
-                tx.setUpdateTime(block.getTime());
-                tx.getConfidence().setAppearedAtChainHeight((int)height);
+                Block txBlock = chain.getStore().get(first.height);
+                tx.setUpdateTime(txBlock.getTime());
+                tx.getConfidence().setAppearedAtChainHeight((int)first.height);
                 txs.put(tx.getHash(), tx);
                 log.info("reached block for {}", tx.getHash());
                 SettableFuture<Transaction> future = pendingDownload.remove(tx.getHash());
