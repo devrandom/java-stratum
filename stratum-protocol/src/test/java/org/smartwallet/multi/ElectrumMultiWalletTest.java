@@ -24,9 +24,7 @@ import org.junit.Test;
 import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.*;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.concurrent.BlockingQueue;
 
@@ -39,6 +37,7 @@ import static org.junit.Assert.*;
  */
 public class ElectrumMultiWalletTest {
     public static final String TEST_TX = "010000000168a93bec585d021cc3382b65e9c2bb95d6c1684f31ef3a3f7102af90ab380262000000008a473044022067f8d6da90ba08db3443e7bbb56a30496deb5ee5384fbc2ac8483ab55e998b14022068786e1460b30cdbb152fcfd85b130c6096496e4a2a9b8277a94016eb186297b014104ccc493c773ed7b190fd3fec0fde94df66605923b5ba6781968921e3f7c86060f62799e085a6873cc5dc1592e99a9090951cad28102cb920da361944d1a827916ffffffff0230517d01000000001976a91492b3870116f135b3d740549bb4785a5f7718b01c88ac40787d01000000001976a914f0dd368cc5ce378301947691548fb9b2c8a0b69088ac00000000";
+    public static final File BASE_DIRECTORY = new File("/tmp");
     private NetworkParameters params;
     private SmartWallet wallet;
     private StratumClient client;
@@ -69,7 +68,7 @@ public class ElectrumMultiWalletTest {
         stratumChain = control.createMock(StratumChain.class);
         expect(stratumChain.getStore()).andStubReturn(store);
         expect(store.get(340242)).andStubReturn(params.getGenesisBlock().cloneAsHeader());
-        multiWallet = new ElectrumMultiWallet(wallet);
+        multiWallet = new ElectrumMultiWallet(wallet, BASE_DIRECTORY);
         multiWallet.start(client, stratumChain);
     }
 
@@ -110,7 +109,7 @@ public class ElectrumMultiWalletTest {
             @Override
             public Wallet create(NetworkParameters params, KeyChainGroup keyChainGroup) {
                 SmartWallet wallet1 = new SmartWallet(params, keyChainGroup);
-                multiWallet = new ElectrumMultiWallet(wallet1);
+                multiWallet = new ElectrumMultiWallet(wallet1, BASE_DIRECTORY);
                 return wallet1;
             }
         };

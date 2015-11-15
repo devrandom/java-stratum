@@ -44,6 +44,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     public static final String EXTENSION_ID = "org.smartcolors.electrum";
     private static final Map<Sha256Hash, Transaction> EMPTY_POOL = Maps.newHashMap();
+    private final File baseDirectory;
 
     protected StratumClient client;
     protected final ObjectMapper mapper;
@@ -62,7 +63,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
      *
      * @param wallet
      */
-    public ElectrumMultiWallet(SmartWallet wallet) {
+    public ElectrumMultiWallet(SmartWallet wallet, File baseDirectory) {
         super(wallet);
         confidenceTable = getContext().getConfidenceTable();
         wallet.addExtension(this);
@@ -71,6 +72,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         pendingBlock = Sets.newTreeSet();
         mapper = new ObjectMapper();
         eventListeners = new CopyOnWriteArrayList<>();
+        this.baseDirectory = baseDirectory;
+        wallet.saveNow();
     }
     
     @Override
@@ -225,7 +228,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     public void startAsync() {
         checkState(client == null);
         client = new StratumClient(wallet.getNetworkParameters());
-        chain = new StratumChain(wallet.getNetworkParameters(), new File("electrum.chain"), client);
+        chain = new StratumChain(wallet.getNetworkParameters(), new File(baseDirectory, "electrum.chain"), client);
         chain.addChainListener(this);
         // This won't actually cause any network activity yet.  We prefer network activity on the stratum client thread,
         // especially on Android.
