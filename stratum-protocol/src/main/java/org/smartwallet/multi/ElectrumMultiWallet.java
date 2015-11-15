@@ -227,6 +227,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     @Override
     public void startAsync() {
         checkState(client == null);
+        checkState(chain == null);
+        checkState(addressQueue == null);
+        checkState(addressChangeService == null);
+
         client = new StratumClient(wallet.getNetworkParameters());
         chain = new StratumChain(wallet.getNetworkParameters(), new File(baseDirectory, "electrum.chain"), client);
         chain.addChainListener(this);
@@ -254,7 +258,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             log.warn("already stopped");
             return;
         }
-        chain.stopAsync();
+        chain.close();
         chain = null;
         client.stopInBackground();
         log.warn("state is {}", client.state());
@@ -262,7 +266,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         client = null;
     }
 
-    private void safeAwaitTerminated() {
+    public void safeAwaitTerminated() {
+        // Await for client to terminate
         if (client.state() == Service.State.FAILED) {
             log.error("client has previously failed", client.failureCause());
         } else {
@@ -272,6 +277,18 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 log.error("client failed during stop", client.failureCause());
             }
         }
+
+        // Await for service to terminate.  It should have terminated, since the client should have told it to
+        // shut down.
+        try {
+            boolean terminated = addressChangeService.awaitTermination(100, TimeUnit.SECONDS);
+            if (!terminated)
+                throw new IllegalStateException("could not stop addressChangeService after 100 sec");
+        } catch (InterruptedException e) {
+            Throwables.propagate(e);
+        }
+        addressChangeService = null;
+        addressQueue = null;
     }
 
     @Override
@@ -308,14 +325,17 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 }
             }
         }
-        
+
         for (final Address address : addresses) {
             final String addressString = address.toString();
             downloadFutures.put(addressString, SettableFuture.<Integer>create());
             StratumSubscription subscription = client.subscribe(address);
+            checkState(addressQueue == null || addressQueue == subscription.queue);
             addressQueue = subscription.queue;
-            listenToAddressQueue();
+            listenToAddressQueue(subscription.queue);
         }
+
+        checkState(addressQueue != null);
     }
 
     static ThreadFactory historyThreadFactory =
@@ -329,7 +349,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                         }
                     }).build();
 
-    private void listenToAddressQueue() {
+    private void listenToAddressQueue(final BlockingQueue<StratumMessage> queue) {
         if (addressChangeService == null) {
             addressChangeService = Executors.newSingleThreadExecutor(historyThreadFactory);
             addressChangeService.submit(new Runnable() {
@@ -337,9 +357,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 public void run() {
                     while (true) {
                         try {
-                            StratumMessage item = addressQueue.take();
+                            StratumMessage item = queue.take();
                             if (item.isSentinel()) {
                                 addressChangeService.shutdown();
+                                log.info("sentinel on queue, exiting");
                                 break;
                             }
                             log.info(mapper.writeValueAsString(item));

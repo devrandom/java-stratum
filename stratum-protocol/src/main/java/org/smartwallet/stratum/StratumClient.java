@@ -551,7 +551,8 @@ public class StratumClient extends AbstractExecutionThreadService {
             return;
         }
         try {
-            subscriptions.get(message.method).put(message);
+            BlockingQueue<StratumMessage> queue = subscriptions.get(message.method);
+            queue.put(message);
         } catch (InterruptedException e) {
             logger.warn("interrupted while handling message {}", message.method);
         }

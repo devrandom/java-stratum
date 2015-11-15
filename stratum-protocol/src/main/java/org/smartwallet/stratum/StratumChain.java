@@ -76,11 +76,13 @@ public class StratumChain extends AbstractExecutionThreadService {
 
         while (true) {
             StratumMessage item = queue.take();
-            if (item.isSentinel())
+            if (item.isSentinel()) {
+                log.info("sentinel on queue, exiting");
                 return;
+            }
             long height = item.result.get("block_height").longValue();
             Block block = makeBlock(item.result);
-            System.out.println(block);
+            log.info("block {} @{}", height, block.getTime());
             try {
                 if (download(height - 1) && store.getHeight() == height - 1) {
                     store.add(block);
@@ -102,7 +104,6 @@ public class StratumChain extends AbstractExecutionThreadService {
             log.info("at chunk height {}", index * NetworkParameters.INTERVAL);
             ListenableFuture<StratumMessage> future = client.call("blockchain.block.get_chunk", index);
             StratumMessage item = future.get();
-            long chunkHeight = index * NetworkParameters.INTERVAL;
             byte[] data = Utils.HEX.decode(item.result.asText());
             int num = data.length / Block.HEADER_SIZE;
             int start = (int) (store.getHeight() + 1) % NetworkParameters.INTERVAL;
