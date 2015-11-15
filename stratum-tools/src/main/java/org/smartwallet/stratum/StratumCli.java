@@ -424,8 +424,8 @@ public class StratumCli {
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
             StratumSubscription subscription = client.subscribeToHeaders();
-            headersChangeQueue = subscription.queue;
             if (headersChangeService == null) {
+                headersChangeQueue = client.getHeadersQueue();
                 headersChangeService = Executors.newSingleThreadExecutor();
                 headersChangeService.submit(new Runnable() {
                     @Override
@@ -464,8 +464,8 @@ public class StratumCli {
             }
             if (subscription == null)
                 return CommandResult.SUCCESS;
-            addressChangeQueue = subscription.queue;
             if (addressChangeService == null) {
+                addressChangeQueue = client.getAddressQueue();
                 addressChangeService = Executors.newSingleThreadExecutor();
                 addressChangeService.submit(new Runnable() {
                     @Override

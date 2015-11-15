@@ -23,7 +23,9 @@ import org.bitcoinj.wallet.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.smartcolors.*;
-import org.smartwallet.stratum.*;
+import org.smartwallet.stratum.StratumChain;
+import org.smartwallet.stratum.StratumClient;
+import org.smartwallet.stratum.StratumMessage;
 import org.smartwallet.stratum.protos.Protos;
 
 import javax.annotation.Nonnull;
@@ -236,6 +238,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         chain.addChainListener(this);
         // This won't actually cause any network activity yet.  We prefer network activity on the stratum client thread,
         // especially on Android.
+
+        addressQueue = client.getAddressQueue();
+        listenToAddressQueue(addressQueue);
+
         subscribeToKeys();
         chain.startAsync();
         client.startAsync();
@@ -264,6 +270,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         log.warn("state is {}", client.state());
         safeAwaitTerminated();
         client = null;
+        doneWithAddressQueue();
     }
 
     public void safeAwaitTerminated() {
@@ -277,9 +284,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 log.error("client failed during stop", client.failureCause());
             }
         }
+    }
 
-        // Await for service to terminate.  It should have terminated, since the client should have told it to
-        // shut down.
+    // Await for service to terminate.  It should have terminated, since the client should have told it to
+    // shut down.
+    private void doneWithAddressQueue() {
         try {
             boolean terminated = addressChangeService.awaitTermination(100, TimeUnit.SECONDS);
             if (!terminated)
@@ -329,13 +338,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         for (final Address address : addresses) {
             final String addressString = address.toString();
             downloadFutures.put(addressString, SettableFuture.<Integer>create());
-            StratumSubscription subscription = client.subscribe(address);
-            checkState(addressQueue == null || addressQueue == subscription.queue);
-            addressQueue = subscription.queue;
-            listenToAddressQueue(subscription.queue);
+            client.subscribe(address);
         }
-
-        checkState(addressQueue != null);
     }
 
     static ThreadFactory historyThreadFactory =

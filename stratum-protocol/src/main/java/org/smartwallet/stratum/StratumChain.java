@@ -47,6 +47,7 @@ public class StratumChain extends AbstractExecutionThreadService {
         this.client = client;
         this.file = file;
         listeners = new CopyOnWriteArrayList<>();
+        queue = client.getHeadersQueue();
     }
 
     public HeadersStore getStore() {
@@ -72,7 +73,7 @@ public class StratumChain extends AbstractExecutionThreadService {
     protected void run() throws Exception {
         store = new HeadersStore(params, file);
         store.verifyLast();
-        queue = client.subscribeToHeaders().queue;
+        client.subscribeToHeaders();
 
         while (true) {
             StratumMessage item = queue.take();

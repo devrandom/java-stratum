@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -26,7 +25,6 @@ import org.smartwallet.stratum.*;
 
 import java.io.*;
 import java.util.ArrayList;
-import java.util.concurrent.BlockingQueue;
 
 import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.isA;
@@ -158,8 +156,7 @@ public class ElectrumMultiWalletTest {
     @Test
     public void testSubscribeToKeys() throws Exception {
         SettableFuture<StratumMessage> future = SettableFuture.create();
-        BlockingQueue<StratumMessage> queue = Queues.newArrayBlockingQueue(1);
-        StratumSubscription subscription = new StratumSubscription(future, queue);
+        StratumSubscription subscription = new StratumSubscription(future);
         expect(client.subscribe(isA(Address.class)))
                 .andReturn(subscription).times(26); // (10 + 3) * 2
         control.replay();

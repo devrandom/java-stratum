@@ -39,6 +39,8 @@ import static com.google.common.base.Preconditions.checkState;
 public class StratumClient extends AbstractExecutionThreadService {
     public static final int SUBSCRIPTION_QUEUE_CAPACITY = 10;
     public static final int PING_PERIOD = 60;
+    public static final String BLOCKCHAIN_HEADERS_SUBSCRIBE = "blockchain.headers.subscribe";
+    public static final String BLOCKCHAIN_ADDRESS_SUBSCRIBE = "blockchain.address.subscribe";
     protected static Logger logger = LoggerFactory.getLogger("StratumClient");
     private static CycleDetectingLockFactory lockFactory = CycleDetectingLockFactory.newInstance(CycleDetectingLockFactory.Policies.DISABLED);
     protected final ObjectMapper mapper;
@@ -57,6 +59,14 @@ public class StratumClient extends AbstractExecutionThreadService {
     private long subscribedHeaders = 0;
     private Pinger pinger;
     private boolean isQueue;
+
+    public BlockingQueue<StratumMessage> getHeadersQueue() {
+        return getSubscriptionQueue(BLOCKCHAIN_HEADERS_SUBSCRIBE);
+    }
+
+    public BlockingQueue<StratumMessage> getAddressQueue() {
+        return getSubscriptionQueue(BLOCKCHAIN_ADDRESS_SUBSCRIBE);
+    }
 
     static class PendingCall {
         final StratumMessage message;
@@ -402,11 +412,12 @@ public class StratumClient extends AbstractExecutionThreadService {
         while (true) {
             String line;
             line = reader.readLine();
-            logger.info("< {}", line);
             if (line == null) {
-                handleFatal(new EOFException());
+                logger.info("< EOF");
+                closeSocket();
                 return;
             }
+            logger.info("< {}", line);
             StratumMessage message;
             message = mapper.readValue(line, StratumMessage.class);
             if (message.isResult())
@@ -462,7 +473,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     public StratumSubscription subscribe(Address address) {
         long id = currentId.getAndIncrement();
         subscribedAddresses.put(address, id);
-        return subscribe("blockchain.address.subscribe", address.toString(), id);
+        return subscribe(BLOCKCHAIN_ADDRESS_SUBSCRIBE, address.toString(), id);
     }
 
     /**
@@ -475,7 +486,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     public StratumSubscription subscribeToHeaders() {
         long id = currentId.getAndIncrement();
         subscribedHeaders = id;
-        return subscribe("blockchain.headers.subscribe", null, id);
+        return subscribe(BLOCKCHAIN_HEADERS_SUBSCRIBE, null, id);
     }
 
     public void setQueue(boolean isQueue) {
@@ -495,19 +506,27 @@ public class StratumClient extends AbstractExecutionThreadService {
     protected StratumSubscription subscribe(String method, String param, long id) {
         try {
             lock.lock();
-            if (!subscriptions.containsKey(method)) {
-                subscriptions.putIfAbsent(method, makeSubscriptionQueue());
-            }
             SettableFuture<StratumMessage> future = SettableFuture.create();
             StratumMessage message = makeMessage(method, param, id);
             calls.put(id, new PendingSubscription(message, future));
             if (isConnected) {
                 writeMessage(message);
             }
-            return new StratumSubscription(future, subscriptions.get(method));
+            return new StratumSubscription(future);
         } finally {
             lock.unlock();
         }
+    }
+
+    private BlockingQueue<StratumMessage> getSubscriptionQueue(String method) {
+        if (!subscriptions.containsKey(method)) {
+            subscriptions.putIfAbsent(method, makeSubscriptionQueue());
+        }
+        return subscriptions.get(method);
+    }
+
+    private ArrayBlockingQueue<StratumMessage> makeSubscriptionQueue() {
+        return Queues.newArrayBlockingQueue(SUBSCRIPTION_QUEUE_CAPACITY);
     }
 
     private void writeMessage(StratumMessage message) {
@@ -524,10 +543,6 @@ public class StratumClient extends AbstractExecutionThreadService {
     private StratumMessage makeMessage(String method, String param, long id) {
         ArrayList<Object> params = (param != null) ? Lists.<Object>newArrayList(param) : Lists.newArrayList();
         return new StratumMessage(id, method, params, mapper);
-    }
-
-    private ArrayBlockingQueue<StratumMessage> makeSubscriptionQueue() {
-        return Queues.newArrayBlockingQueue(SUBSCRIPTION_QUEUE_CAPACITY);
     }
 
     protected void handleResult(StratumMessage message) {
