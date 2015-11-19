@@ -11,6 +11,7 @@ message Transaction {
     // Bitcoin serialized transaction
     required bytes transaction = 1;
     required TransactionConfidence confidence = 2;
+    optional int64 updated_at = 3; // millis since epoch the transaction was last updated
 }
 
 message TransactionConfidence {

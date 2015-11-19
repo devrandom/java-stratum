@@ -422,12 +422,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 confidenceBuilder.setDepth(confidence.getDepthInBlocks());
             }
 
-            Protos.Transaction transaction =
+            Protos.Transaction.Builder transaction =
                     Protos.Transaction.newBuilder()
                             .setConfidence(confidenceBuilder)
-                            .setTransaction(ByteString.copyFrom(tx.bitcoinSerialize()))
-                            .build();
-            extension.addTransactions(transaction);
+                            .setTransaction(ByteString.copyFrom(tx.bitcoinSerialize()));
+            if (tx.getUpdateTime() != null)
+                transaction.setUpdatedAt(tx.getUpdateTime().getTime());
+            extension.addTransactions(transaction.build());
         }
         return extension.build().toByteArray();
     }
@@ -437,9 +438,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         Protos.Electrum extension = Protos.Electrum.parseFrom(data);
         for (Protos.Transaction transaction : extension.getTransactionsList()) {
             Transaction tx = new Transaction(containingWallet.getNetworkParameters(), transaction.getTransaction().toByteArray());
-            TransactionConfidence confidence = tx.getConfidence();
-            readConfidence(tx, transaction.getConfidence(), confidence);
+            TransactionConfidence confidenceProto = tx.getConfidence();
+            readConfidence(tx, transaction.getConfidence(), confidenceProto);
             txs.put(tx.getHash(), tx);
+            if (transaction.hasUpdatedAt())
+                tx.setUpdateTime(new Date(transaction.getUpdatedAt()));
         }
         confidenceTable = getContext().getConfidenceTable();
     }
@@ -590,10 +593,15 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 log.info("reached block for {}", tx.getHash());
                 SettableFuture<Transaction> future = pendingDownload.remove(tx.getHash());
                 future.set(tx);
+                saveLater();
             }
         } finally {
             wallet.unlock();
         }
+    }
+
+    public int currentHeight() {
+        return (int)chain.getStore().getHeight();
     }
 
     void receive(Transaction tx, int height) {
@@ -612,18 +620,19 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                     tx.setUpdateTime(block.getTime());
                     confidence.setAppearedAtChainHeight(height);
                     txs.put(tx.getHash(), tx);
+                    saveLater();
                 }
             } else {
                 log.info("unconfirmed {}", tx.getHash());
                 pendingDownload.remove(tx.getHash()).set(tx);
                 txs.put(tx.getHash(), tx);
+                saveLater();
             }
         } finally {
             wallet.unlock();
         }
         log.info("got tx {}", tx.getHashAsString());
         markKeysAsUsed(tx);
-        saveLater();
         notifyTransaction(tx);
     }
 

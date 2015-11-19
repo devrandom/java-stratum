@@ -729,6 +729,23 @@ public final class Protos {
      * <code>required .stratum.TransactionConfidence confidence = 2;</code>
      */
     org.smartwallet.stratum.protos.Protos.TransactionConfidenceOrBuilder getConfidenceOrBuilder();
+
+    /**
+     * <code>optional int64 updated_at = 3;</code>
+     *
+     * <pre>
+     * millis since epoch the transaction was last updated
+     * </pre>
+     */
+    boolean hasUpdatedAt();
+    /**
+     * <code>optional int64 updated_at = 3;</code>
+     *
+     * <pre>
+     * millis since epoch the transaction was last updated
+     * </pre>
+     */
+    long getUpdatedAt();
   }
   /**
    * Protobuf type {@code stratum.Transaction}
@@ -798,6 +815,11 @@ public final class Protos {
                 confidence_ = subBuilder.buildPartial();
               }
               bitField0_ |= 0x00000002;
+              break;
+            }
+            case 24: {
+              bitField0_ |= 0x00000004;
+              updatedAt_ = input.readInt64();
               break;
             }
           }
@@ -884,9 +906,33 @@ public final class Protos {
       return confidence_;
     }
 
+    public static final int UPDATED_AT_FIELD_NUMBER = 3;
+    private long updatedAt_;
+    /**
+     * <code>optional int64 updated_at = 3;</code>
+     *
+     * <pre>
+     * millis since epoch the transaction was last updated
+     * </pre>
+     */
+    public boolean hasUpdatedAt() {
+      return ((bitField0_ & 0x00000004) == 0x00000004);
+    }
+    /**
+     * <code>optional int64 updated_at = 3;</code>
+     *
+     * <pre>
+     * millis since epoch the transaction was last updated
+     * </pre>
+     */
+    public long getUpdatedAt() {
+      return updatedAt_;
+    }
+
     private void initFields() {
       transaction_ = com.google.protobuf.ByteString.EMPTY;
       confidence_ = org.smartwallet.stratum.protos.Protos.TransactionConfidence.getDefaultInstance();
+      updatedAt_ = 0L;
     }
     private byte memoizedIsInitialized = -1;
     public final boolean isInitialized() {
@@ -915,6 +961,9 @@ public final class Protos {
       if (((bitField0_ & 0x00000002) == 0x00000002)) {
         output.writeMessage(2, confidence_);
       }
+      if (((bitField0_ & 0x00000004) == 0x00000004)) {
+        output.writeInt64(3, updatedAt_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -931,6 +980,10 @@ public final class Protos {
       if (((bitField0_ & 0x00000002) == 0x00000002)) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(2, confidence_);
+      }
+      if (((bitField0_ & 0x00000004) == 0x00000004)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(3, updatedAt_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSerializedSize = size;
@@ -1058,6 +1111,8 @@ public final class Protos {
           confidenceBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000002);
+        updatedAt_ = 0L;
+        bitField0_ = (bitField0_ & ~0x00000004);
         return this;
       }
 
@@ -1098,6 +1153,10 @@ public final class Protos {
         } else {
           result.confidence_ = confidenceBuilder_.build();
         }
+        if (((from_bitField0_ & 0x00000004) == 0x00000004)) {
+          to_bitField0_ |= 0x00000004;
+        }
+        result.updatedAt_ = updatedAt_;
         result.bitField0_ = to_bitField0_;
         onBuilt();
         return result;
@@ -1119,6 +1178,9 @@ public final class Protos {
         }
         if (other.hasConfidence()) {
           mergeConfidence(other.getConfidence());
+        }
+        if (other.hasUpdatedAt()) {
+          setUpdatedAt(other.getUpdatedAt());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         return this;
@@ -1320,6 +1382,54 @@ public final class Protos {
           confidence_ = null;
         }
         return confidenceBuilder_;
+      }
+
+      private long updatedAt_ ;
+      /**
+       * <code>optional int64 updated_at = 3;</code>
+       *
+       * <pre>
+       * millis since epoch the transaction was last updated
+       * </pre>
+       */
+      public boolean hasUpdatedAt() {
+        return ((bitField0_ & 0x00000004) == 0x00000004);
+      }
+      /**
+       * <code>optional int64 updated_at = 3;</code>
+       *
+       * <pre>
+       * millis since epoch the transaction was last updated
+       * </pre>
+       */
+      public long getUpdatedAt() {
+        return updatedAt_;
+      }
+      /**
+       * <code>optional int64 updated_at = 3;</code>
+       *
+       * <pre>
+       * millis since epoch the transaction was last updated
+       * </pre>
+       */
+      public Builder setUpdatedAt(long value) {
+        bitField0_ |= 0x00000004;
+        updatedAt_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 updated_at = 3;</code>
+       *
+       * <pre>
+       * millis since epoch the transaction was last updated
+       * </pre>
+       */
+      public Builder clearUpdatedAt() {
+        bitField0_ = (bitField0_ & ~0x00000004);
+        updatedAt_ = 0L;
+        onChanged();
+        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:stratum.Transaction)
@@ -2501,19 +2611,19 @@ public final class Protos {
     java.lang.String[] descriptorData = {
       "\n\016electrum.proto\022\007stratum\"6\n\010Electrum\022*\n" +
       "\014transactions\030\001 \003(\0132\024.stratum.Transactio" +
-      "n\"V\n\013Transaction\022\023\n\013transaction\030\001 \002(\014\0222\n" +
+      "n\"j\n\013Transaction\022\023\n\013transaction\030\001 \002(\014\0222\n" +
       "\nconfidence\030\002 \002(\0132\036.stratum.TransactionC" +
-      "onfidence\"\340\002\n\025TransactionConfidence\0221\n\004t" +
-      "ype\030\001 \001(\0162#.stratum.TransactionConfidenc" +
-      "e.Type\022\032\n\022appeared_at_height\030\002 \001(\005\022\036\n\026ov" +
-      "erriding_transaction\030\003 \001(\014\022\r\n\005depth\030\004 \001(" +
-      "\005\0225\n\006source\030\007 \001(\0162%.stratum.TransactionC" +
-      "onfidence.Source\"O\n\004Type\022\013\n\007UNKNOWN\020\000\022\014\n",
-      "\010BUILDING\020\001\022\013\n\007PENDING\020\002\022\025\n\021NOT_IN_BEST_" +
-      "CHAIN\020\003\022\010\n\004DEAD\020\004\"A\n\006Source\022\022\n\016SOURCE_UN" +
-      "KNOWN\020\000\022\022\n\016SOURCE_NETWORK\020\001\022\017\n\013SOURCE_SE" +
-      "LF\020\002B(\n\036org.smartwallet.stratum.protosB\006" +
-      "Protos"
+      "onfidence\022\022\n\nupdated_at\030\003 \001(\003\"\340\002\n\025Transa" +
+      "ctionConfidence\0221\n\004type\030\001 \001(\0162#.stratum." +
+      "TransactionConfidence.Type\022\032\n\022appeared_a" +
+      "t_height\030\002 \001(\005\022\036\n\026overriding_transaction" +
+      "\030\003 \001(\014\022\r\n\005depth\030\004 \001(\005\0225\n\006source\030\007 \001(\0162%." +
+      "stratum.TransactionConfidence.Source\"O\n\004",
+      "Type\022\013\n\007UNKNOWN\020\000\022\014\n\010BUILDING\020\001\022\013\n\007PENDI" +
+      "NG\020\002\022\025\n\021NOT_IN_BEST_CHAIN\020\003\022\010\n\004DEAD\020\004\"A\n" +
+      "\006Source\022\022\n\016SOURCE_UNKNOWN\020\000\022\022\n\016SOURCE_NE" +
+      "TWORK\020\001\022\017\n\013SOURCE_SELF\020\002B(\n\036org.smartwal" +
+      "let.stratum.protosB\006Protos"
     };
     com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
         new com.google.protobuf.Descriptors.FileDescriptor.    InternalDescriptorAssigner() {
@@ -2538,7 +2648,7 @@ public final class Protos {
     internal_static_stratum_Transaction_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_stratum_Transaction_descriptor,
-        new java.lang.String[] { "Transaction", "Confidence", });
+        new java.lang.String[] { "Transaction", "Confidence", "UpdatedAt", });
     internal_static_stratum_TransactionConfidence_descriptor =
       getDescriptor().getMessageTypes().get(2);
     internal_static_stratum_TransactionConfidence_fieldAccessorTable = new

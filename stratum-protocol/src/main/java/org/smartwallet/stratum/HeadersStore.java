@@ -108,9 +108,12 @@ public class HeadersStore {
 
     public void add(Block block) {
         checkState(block.getTransactions() == null);
-        checkState(block.getPrevBlockHash().equals(top().getHash()));
         lock.lock();
         try {
+            if (!block.getPrevBlockHash().equals(top().getHash())) {
+                log.error("block.prev = {}, but expecting {}@{}", block.getPrevBlockHash(), top().getHash(), getHeight());
+                throw new IllegalStateException("bad chain");
+            }
             channel.write(ByteBuffer.wrap(block.bitcoinSerialize()), channel.size());
         } catch (Exception e) {
             Throwables.propagate(e);
