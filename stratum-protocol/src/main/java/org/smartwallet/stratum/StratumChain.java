@@ -81,8 +81,9 @@ public class StratumChain extends AbstractExecutionThreadService {
                 log.info("sentinel on queue, exiting");
                 return;
             }
-            long height = item.result.get("block_height").longValue();
-            Block block = makeBlock(item.result);
+            JsonNode result = item.result != null ? item.result : item.params.get(0);
+            long height = result.get("block_height").longValue();
+            Block block = makeBlock(result);
             log.info("block {} @{}", height, block.getTime());
             try {
                 if (download(height - 1) && store.getHeight() == height - 1) {
@@ -92,7 +93,7 @@ public class StratumChain extends AbstractExecutionThreadService {
                     listener.onHeight(height, block);
                 }
             } catch (CancellationException | ExecutionException e) {
-                log.error("failed to download chain at height {}", height-1);
+                log.error("failed to download chain at height {}", height - 1);
                 // Will retry on next time we get a message
             }
             log.info("store is at height {}", store.getHeight());
