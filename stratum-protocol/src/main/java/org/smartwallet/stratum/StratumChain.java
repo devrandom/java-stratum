@@ -47,7 +47,6 @@ public class StratumChain extends AbstractExecutionThreadService {
         this.client = client;
         this.file = file;
         listeners = new CopyOnWriteArrayList<>();
-        queue = client.getHeadersQueue();
     }
 
     public HeadersStore getStore() {
@@ -57,6 +56,12 @@ public class StratumChain extends AbstractExecutionThreadService {
     public void close() {
         stopAsync();
         awaitTerminated();
+    }
+
+    @Override
+    protected void startUp() throws Exception {
+        queue = client.getHeadersQueue();
+        super.startUp();
     }
 
     @Override
@@ -71,8 +76,7 @@ public class StratumChain extends AbstractExecutionThreadService {
 
     @Override
     protected void run() throws Exception {
-        store = new HeadersStore(params, file);
-        store.verifyLast();
+        createStore();
         client.subscribeToHeaders();
 
         while (true) {
@@ -87,7 +91,7 @@ public class StratumChain extends AbstractExecutionThreadService {
             log.info("block {} @{}", height, block.getTime());
             try {
                 if (download(height - 1) && store.getHeight() == height - 1) {
-                    store.add(block);
+                    add(block);
                 }
                 for (Listener listener : listeners) {
                     listener.onHeight(height, block);
@@ -100,6 +104,41 @@ public class StratumChain extends AbstractExecutionThreadService {
         }
     }
 
+    void createStore() {
+        store = new HeadersStore(params, file);
+        store.verifyLast();
+    }
+
+    boolean add(Block block) throws ExecutionException, InterruptedException {
+        if (!store.add(block)) {
+            reorg();
+            return false;
+        }
+        return true;
+    }
+
+    void reorg() throws ExecutionException, InterruptedException {
+        long storeHeight = store.getHeight();
+
+        // Find a spot in our local store where the block connects to the block we get from the server.
+        for (int i = 0 ; i < 100 ; i++) {
+            Block storePrev = store.get(storeHeight - i - 1);
+            log.info("reorg to height {} our prev {}", storeHeight - i, storePrev.getHash());
+            ListenableFuture<StratumMessage> future =
+                    client.call("blockchain.block.get_header", storeHeight - i);
+            StratumMessage item = future.get();
+            Block block = makeBlock(item.result);
+            if (block.getPrevBlockHash().equals(storePrev.getHash())) {
+                // Found the spot.  Truncate blocks beyond it, and add the block from the server.
+                store.truncate(storeHeight - i - 1);
+                if (!store.add(block))
+                    throw new IllegalStateException("could not add block during reorg");
+                return;
+            }
+        }
+        throw new RuntimeException("could not find a reorg point within 100 blocks");
+    }
+
     private boolean download(long height) throws InterruptedException, CancellationException, ExecutionException {
         while (height > store.getHeight() + 50) {
             long index = (store.getHeight() + 1) / NetworkParameters.INTERVAL;
@@ -108,19 +147,25 @@ public class StratumChain extends AbstractExecutionThreadService {
             StratumMessage item = future.get();
             byte[] data = Utils.HEX.decode(item.result.asText());
             int num = data.length / Block.HEADER_SIZE;
+            log.info("chunk size {}", num);
             int start = (int) (store.getHeight() + 1) % NetworkParameters.INTERVAL;
             for (int i = start ; i < num ; i++) {
                 Block block = new Block(params, Arrays.copyOfRange(data, i * Block.HEADER_SIZE, (i+1) * Block.HEADER_SIZE));
-                store.add(block);
+                if (!add(block))
+                    break; // Had a reorg, add one by one at new height
             }
         }
         while (height > store.getHeight()) {
-            System.out.println(store.getHeight());
+            log.info("adding block, store height={}", store.getHeight());
             ListenableFuture<StratumMessage> future =
                     client.call("blockchain.block.get_header", store.getHeight() + 1);
             StratumMessage item = future.get();
+            if (item.result == null) {
+                log.warn("no block at height {}", store.getHeight() + 1);
+                return false;
+            }
             Block block = makeBlock(item.result);
-            store.add(block);
+            add(block);
         }
         return true;
     }

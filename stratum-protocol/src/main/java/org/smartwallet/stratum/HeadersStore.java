@@ -57,6 +57,7 @@ public class HeadersStore {
         }
     }
 
+    /** Get the block at height index. */
     public Block get(long index) {
         lock.lock();
         try {
@@ -84,6 +85,7 @@ public class HeadersStore {
         }
     }
 
+    /** Get the height.  A store with just the genesis block is at height zero. */
     public long getHeight() {
         lock.lock();
         try {
@@ -95,10 +97,11 @@ public class HeadersStore {
         }
     }
 
-    public void truncate(int index) {
+    /** After this call, the store will be at height index. */
+    public void truncate(long index) {
         lock.lock();
         try {
-            channel.truncate(index * Block.HEADER_SIZE);
+            channel.truncate((index + 1) * Block.HEADER_SIZE);
         } catch (IOException e) {
             Throwables.propagate(e);
         } finally {
@@ -106,17 +109,18 @@ public class HeadersStore {
         }
     }
 
-    public void add(Block block) {
+    public boolean add(Block block) {
         checkState(block.getTransactions() == null);
         lock.lock();
         try {
             if (!block.getPrevBlockHash().equals(top().getHash())) {
                 log.error("block.prev = {}, but expecting {}@{}", block.getPrevBlockHash(), top().getHash(), getHeight());
-                throw new IllegalStateException("bad chain");
+                return false;
             }
             channel.write(ByteBuffer.wrap(block.bitcoinSerialize()), channel.size());
+            return true;
         } catch (Exception e) {
-            Throwables.propagate(e);
+            throw Throwables.propagate(e);
         } finally {
             lock.unlock();
         }
