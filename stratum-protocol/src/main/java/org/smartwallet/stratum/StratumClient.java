@@ -59,6 +59,8 @@ public class StratumClient extends AbstractExecutionThreadService {
     private long subscribedHeaders = 0;
     private Pinger pinger;
     private boolean isQueue;
+    private InetSocketAddress peerAddress;
+    private String peerVersion;
 
     public BlockingQueue<StratumMessage> getHeadersQueue() {
         return getSubscriptionQueue(BLOCKCHAIN_HEADERS_SUBSCRIBE);
@@ -66,6 +68,18 @@ public class StratumClient extends AbstractExecutionThreadService {
 
     public BlockingQueue<StratumMessage> getAddressQueue() {
         return getSubscriptionQueue(BLOCKCHAIN_ADDRESS_SUBSCRIBE);
+    }
+
+    public String getPeerVersion() {
+        return peerVersion;
+    }
+
+    public List<InetSocketAddress> getConnectedAddresses() {
+        InetSocketAddress address = peerAddress;
+        if (address != null)
+            return Lists.newArrayList(address);
+        else
+            return Lists.newArrayList();
     }
 
     static class PendingCall {
@@ -217,11 +231,11 @@ public class StratumClient extends AbstractExecutionThreadService {
     private void connectSocket() throws IOException {
         // TODO use random, exponentially backoff from failed connections
         InetSocketAddress address = serverAddresses.remove(0);
-        serverAddresses.add(address);
+        serverAddresses.add(peerAddress);
         // Force resolution
-        address = new InetSocketAddress(address.getHostString(), address.getPort());
-        logger.info("Opening a socket to " + address.getHostString() + ":" + address.getPort());
-        socket.connect(address); // TODO timeout
+        peerAddress = new InetSocketAddress(address.getHostString(), address.getPort());
+        logger.info("Opening a socket to " + peerAddress.getHostString() + ":" + peerAddress.getPort());
+        socket.connect(peerAddress); // TODO timeout
     }
 
     @Override
@@ -290,6 +304,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                 public void onSuccess(StratumMessage result) {
                     if (first) {
                         logger.info("server version {}", result.result);
+                        peerVersion = result.result.asText();
                         first = false;
                     } else
                         logger.info("pong");

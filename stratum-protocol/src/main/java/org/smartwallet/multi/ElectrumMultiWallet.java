@@ -31,9 +31,12 @@ import org.smartwallet.stratum.protos.Protos;
 import javax.annotation.Nonnull;
 import java.io.File;
 import java.io.IOException;
+import java.math.BigInteger;
+import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.*;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
@@ -59,11 +62,15 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private ExecutorService addressChangeService;
     private transient CopyOnWriteArrayList<ListenerRegistration<MultiWalletEventListener>> eventListeners;
     private StratumChain chain;
+    private boolean isChainSynced;
+    private boolean isHistorySynced;
+    private ListenableFuture<List<Integer>> downloadFuture;
 
     /**
      * The constructor will add this object as an extension to the wallet.
      *
      * @param wallet
+     * @param baseDirectory the chain file will be stored here
      */
     public ElectrumMultiWallet(SmartWallet wallet, File baseDirectory) {
         super(wallet);
@@ -303,7 +310,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     @Override
     public void awaitDownload() throws InterruptedException {
         try {
-            List<Integer> res = Futures.allAsList(downloadFutures.values()).get();
+            checkNotNull(downloadFuture);
+            List<Integer> res = downloadFuture.get();
             int count = 0;
             for (Integer item : res) {
                 count += item;
@@ -340,6 +348,20 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             downloadFutures.put(addressString, SettableFuture.<Integer>create());
             client.subscribe(address);
         }
+
+        downloadFuture = Futures.allAsList(downloadFutures.values());
+        Futures.addCallback(downloadFuture, new FutureCallback<List<Integer>>() {
+            @Override
+            public void onSuccess(List<Integer> result) {
+                isHistorySynced = true;
+                notifyHeight(chain.getStore().getHeight());
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                log.error("failed to sync history", t);
+            }
+        });
     }
 
     static ThreadFactory historyThreadFactory =
@@ -445,6 +467,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 tx.setUpdateTime(new Date(transaction.getUpdatedAt()));
         }
         confidenceTable = getContext().getConfidenceTable();
+        if (!txs.isEmpty()) {
+            isHistorySynced = true;
+            isChainSynced = true; //TODO refine this
+        }
     }
 
     private void readConfidence(Transaction tx, Protos.TransactionConfidence confidenceProto,
@@ -578,9 +604,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     }
 
     @Override
-    public void onHeight(long height, Block block) {
+    public void onHeight(long height, Block block, boolean isSynced) {
         wallet.lock();
         try {
+            this.isChainSynced = this.isChainSynced || isSynced;
+            notifyHeight(height);
             while (!pendingBlock.isEmpty()) {
                 TransactionWithHeight first = pendingBlock.first();
                 if (first.height > height) break;
@@ -602,6 +630,44 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     public int currentHeight() {
         return (int)chain.getStore().getHeight();
+    }
+
+    @Override
+    public boolean isSynced() {
+        return isChainSynced && isHistorySynced;
+    }
+
+    @Override
+    public List<VersionMessage> getPeers() {
+        List<InetSocketAddress> addresses = client.getConnectedAddresses();
+        List<VersionMessage> peers = Lists.newArrayList();
+        for (InetSocketAddress address : addresses) {
+            VersionMessage msg = new VersionMessage(wallet.getNetworkParameters(), (int)chain.getPeerHeight());
+            msg.subVer = client.getPeerVersion();
+            msg.theirAddr = new PeerAddress(address);
+            peers.add(msg);
+        }
+        return peers;
+    }
+
+    @Override
+    public List<StoredBlock> getRecentBlocks(int maxBlocks) {
+        wallet.lock();
+        try {
+            List<StoredBlock> blocks = Lists.newArrayList();
+            long height = chain.getStore().getHeight();
+            while (blocks.size() < maxBlocks && height > 0) {
+                Block block = chain.getStore().get(height);
+                if (block == null)
+                    break;
+                StoredBlock stored = new StoredBlock(block, BigInteger.ZERO, (int)height);
+                blocks.add(stored);
+                height--;
+            }
+            return blocks;
+        } finally {
+            wallet.unlock();
+        }
     }
 
     void receive(Transaction tx, int height) {
@@ -645,6 +711,23 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                     @Override
                     public void run() {
                         registration.listener.onTransaction(ElectrumMultiWallet.this, tx);
+                    }
+                });
+            }
+        }
+    }
+
+    private void notifyHeight(final long height) {
+        final boolean isSynced = isChainSynced && isHistorySynced;
+        log.info("notify height {} {} {}", isChainSynced, isHistorySynced, height);
+        for (final ListenerRegistration<MultiWalletEventListener> registration : eventListeners) {
+            if (registration.executor == Threading.SAME_THREAD) {
+                registration.listener.onSyncState(this, isSynced, height);
+            } else {
+                registration.executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        registration.listener.onSyncState(ElectrumMultiWallet.this, isSynced, height);
                     }
                 });
             }

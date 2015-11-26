@@ -24,6 +24,7 @@ public class StratumChain extends AbstractExecutionThreadService {
     private final StratumClient client;
     private final CopyOnWriteArrayList<Listener> listeners;
     private final File file;
+    private long peerHeight;
     static ThreadFactory threadFactory =
             new ThreadFactoryBuilder()
                     .setDaemon(true)
@@ -39,7 +40,7 @@ public class StratumChain extends AbstractExecutionThreadService {
     }
 
     public interface Listener {
-        void onHeight(long height, Block block);
+        void onHeight(long height, Block block, boolean isSynced);
     }
 
     public StratumChain(NetworkParameters params, File file, StratumClient client) {
@@ -56,6 +57,10 @@ public class StratumChain extends AbstractExecutionThreadService {
     public void close() {
         stopAsync();
         awaitTerminated();
+    }
+
+    public long getPeerHeight() {
+        return peerHeight;
     }
 
     @Override
@@ -87,20 +92,25 @@ public class StratumChain extends AbstractExecutionThreadService {
             }
             JsonNode result = item.result != null ? item.result : item.params.get(0);
             long height = result.get("block_height").longValue();
+            peerHeight = height;
             Block block = makeBlock(result);
             log.info("block {} @{}", height, block.getTime());
             try {
                 if (download(height - 1) && store.getHeight() == height - 1) {
                     add(block);
                 }
-                for (Listener listener : listeners) {
-                    listener.onHeight(height, block);
-                }
+                notifyHeight(true);
             } catch (CancellationException | ExecutionException e) {
                 log.error("failed to download chain at height {}", height - 1);
                 // Will retry on next time we get a message
             }
             log.info("store is at height {}", store.getHeight());
+        }
+    }
+
+    private void notifyHeight(boolean isSynced) {
+        for (Listener listener : listeners) {
+            listener.onHeight(store.getHeight(), store.top(), isSynced);
         }
     }
 
@@ -154,6 +164,7 @@ public class StratumChain extends AbstractExecutionThreadService {
                 if (!add(block))
                     break; // Had a reorg, add one by one at new height
             }
+            notifyHeight(false);
         }
         while (height > store.getHeight()) {
             log.info("adding block, store height={}", store.getHeight());
@@ -166,6 +177,7 @@ public class StratumChain extends AbstractExecutionThreadService {
             }
             Block block = makeBlock(item.result);
             add(block);
+            notifyHeight(false);
         }
         return true;
     }
