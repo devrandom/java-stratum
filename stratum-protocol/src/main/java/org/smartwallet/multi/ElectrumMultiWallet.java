@@ -241,7 +241,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         checkState(addressChangeService == null);
 
         client = new StratumClient(wallet.getNetworkParameters());
-        chain = new StratumChain(wallet.getNetworkParameters(), new File(baseDirectory, "electrum.chain"), client);
+        chain = makeChain(client);
         chain.addChainListener(this);
         // This won't actually cause any network activity yet.  We prefer network activity on the stratum client thread,
         // especially on Android.
@@ -252,6 +252,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         subscribeToKeys();
         chain.startAsync();
         client.startAsync();
+    }
+
+    private StratumChain makeChain(StratumClient client) {
+        return new StratumChain(wallet.getNetworkParameters(), new File(baseDirectory, "electrum.chain"), client);
     }
 
     @Override
@@ -665,6 +669,22 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 height--;
             }
             return blocks;
+        } finally {
+            wallet.unlock();
+        }
+    }
+
+    @Override
+    public void resetBlockchain() {
+        wallet.lock();
+        try {
+            checkState(chain == null, "must be stopped to reset");
+            StratumChain temp = makeChain(null);
+            temp.reset();
+            txs.clear();
+            isChainSynced = false;
+            isHistorySynced = false;
+            wallet.saveNow();
         } finally {
             wallet.unlock();
         }

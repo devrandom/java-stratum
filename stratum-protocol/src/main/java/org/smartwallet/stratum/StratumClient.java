@@ -237,7 +237,7 @@ public class StratumClient extends AbstractExecutionThreadService {
     private void connectSocket() throws IOException {
         // TODO use random, exponentially backoff from failed connections
         InetSocketAddress address = serverAddresses.remove(0);
-        serverAddresses.add(peerAddress);
+        serverAddresses.add(address);
         // Force resolution
         peerAddress = new InetSocketAddress(address.getHostString(), address.getPort());
         logger.info("Opening a socket to " + peerAddress.getHostString() + ":" + peerAddress.getPort());

@@ -13,10 +13,13 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.*;
 
+import static com.google.common.base.Preconditions.checkState;
+
 /**
  * Created by devrandom on 2015-Nov-08.
  */
 public class StratumChain extends AbstractExecutionThreadService {
+    public static final int RESET_HEIGHT = 300000;
     protected static Logger log = LoggerFactory.getLogger("StratumChain");
     private HeadersStore store;
     private BlockingQueue<StratumMessage> queue;
@@ -37,6 +40,13 @@ public class StratumChain extends AbstractExecutionThreadService {
 
     public void addChainListener(Listener listener) {
         listeners.add(listener);
+    }
+
+    public void reset() {
+        checkState(store == null, "must be closed to reset");
+        HeadersStore temp = new HeadersStore(params, file);
+        temp.truncate(RESET_HEIGHT);
+        temp.close();
     }
 
     public interface Listener {
@@ -72,6 +82,7 @@ public class StratumChain extends AbstractExecutionThreadService {
     @Override
     protected void shutDown() throws Exception {
         store.close();
+        store = null;
     }
 
     @Override
