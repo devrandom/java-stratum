@@ -3,6 +3,7 @@ package org.smartwallet.multi;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
@@ -416,7 +417,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             log.error("got address subscription update with no address");
             return;
         }
-        if (item.result.isNull()) {
+        JsonNode result = item.result;
+        if (result == null)
+            result = item.params.get(1);
+        if (result.isNull()) {
             SettableFuture<Integer> future = downloadFutures.get(address);
             if (future != null && !future.isDone()) {
                 future.set(0);
