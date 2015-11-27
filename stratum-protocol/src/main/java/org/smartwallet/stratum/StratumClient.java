@@ -75,11 +75,17 @@ public class StratumClient extends AbstractExecutionThreadService {
     }
 
     public List<InetSocketAddress> getConnectedAddresses() {
-        InetSocketAddress address = peerAddress;
-        if (address != null)
-            return Lists.newArrayList(address);
-        else
-            return Lists.newArrayList();
+        lock.lock();
+
+        try {
+            InetSocketAddress address = peerAddress;
+            if (address != null && isConnected)
+                return Lists.newArrayList(address);
+            else
+                return Lists.newArrayList();
+        } finally {
+            lock.unlock();
+        }
     }
 
     static class PendingCall {
