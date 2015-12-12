@@ -86,6 +86,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         this.baseDirectory = baseDirectory;
         wallet.saveNow();
     }
+
+    public ElectrumMultiWallet(SmartWallet wallet) {
+        this(wallet, null);
+    }
     
     @Override
     public void addEventListener(MultiWalletEventListener listener, Executor executor) {
