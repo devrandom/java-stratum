@@ -64,10 +64,9 @@ public class ElectrumMultiWalletTest {
         client = control.createMock(StratumClient.class);
         store = control.createMock(HeadersStore.class);
         stratumChain = control.createMock(StratumChain.class);
-        expect(stratumChain.getStore()).andStubReturn(store);
         expect(store.get(340242)).andStubReturn(params.getGenesisBlock().cloneAsHeader());
         multiWallet = new ElectrumMultiWallet(wallet, BASE_DIRECTORY);
-        multiWallet.start(client, stratumChain);
+        multiWallet.start(client, stratumChain, store);
     }
 
     @Test

@@ -9,24 +9,19 @@ import org.bitcoinj.core.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.*;
-
-import static com.google.common.base.Preconditions.checkState;
 
 /**
  * Created by devrandom on 2015-Nov-08.
  */
 public class StratumChain extends AbstractExecutionThreadService {
-    public static final int RESET_HEIGHT = 300000;
     protected static Logger log = LoggerFactory.getLogger("StratumChain");
     private HeadersStore store;
     private BlockingQueue<StratumMessage> queue;
     private final NetworkParameters params;
     private final StratumClient client;
     private final CopyOnWriteArrayList<Listener> listeners;
-    private final File file;
     private long peerHeight;
     static ThreadFactory threadFactory =
             new ThreadFactoryBuilder()
@@ -42,26 +37,15 @@ public class StratumChain extends AbstractExecutionThreadService {
         listeners.add(listener);
     }
 
-    public void reset() {
-        checkState(store == null, "must be closed to reset");
-        HeadersStore temp = new HeadersStore(params, file);
-        temp.truncate(RESET_HEIGHT);
-        temp.close();
-    }
-
     public interface Listener {
         void onHeight(long height, Block block, boolean isSynced);
     }
 
-    public StratumChain(NetworkParameters params, File file, StratumClient client) {
+    public StratumChain(NetworkParameters params, HeadersStore store, StratumClient client) {
         this.params = params;
         this.client = client;
-        this.file = file;
+        this.store = store;
         listeners = new CopyOnWriteArrayList<>();
-    }
-
-    public HeadersStore getStore() {
-        return store;
     }
 
     public void close() {
@@ -92,7 +76,7 @@ public class StratumChain extends AbstractExecutionThreadService {
 
     @Override
     protected void run() throws Exception {
-        createStore();
+        store.verifyLast();
         client.subscribeToHeaders();
 
         while (true) {
@@ -123,11 +107,6 @@ public class StratumChain extends AbstractExecutionThreadService {
         for (Listener listener : listeners) {
             listener.onHeight(store.getHeight(), store.top(), isSynced);
         }
-    }
-
-    void createStore() {
-        store = new HeadersStore(params, file);
-        store.verifyLast();
     }
 
     boolean add(Block block) throws ExecutionException, InterruptedException {

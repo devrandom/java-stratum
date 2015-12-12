@@ -24,9 +24,7 @@ import org.bitcoinj.wallet.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.smartcolors.*;
-import org.smartwallet.stratum.StratumChain;
-import org.smartwallet.stratum.StratumClient;
-import org.smartwallet.stratum.StratumMessage;
+import org.smartwallet.stratum.*;
 import org.smartwallet.stratum.protos.Protos;
 
 import javax.annotation.Nonnull;
@@ -48,9 +46,12 @@ import static com.google.common.base.Preconditions.checkState;
 public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExtension, StratumChain.Listener {
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
+    public static final int RESET_HEIGHT = 300000;
     public static final String EXTENSION_ID = "org.smartcolors.electrum";
+
     private static final Map<Sha256Hash, Transaction> EMPTY_POOL = Maps.newHashMap();
     private final File baseDirectory;
+    private HeadersStore store;
 
     protected StratumClient client;
     protected final ObjectMapper mapper;
@@ -228,10 +229,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         client.awaitRunning();
     }
 
-    void start(StratumClient mockClient, StratumChain mockChain) {
+    void start(StratumClient mockClient, StratumChain mockChain, HeadersStore mockStore) {
         checkState(client == null);
         client = mockClient;
         chain = mockChain;
+        store = mockStore;
     }
 
     @Override
@@ -242,6 +244,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         checkState(addressChangeService == null);
 
         client = new StratumClient(wallet.getNetworkParameters());
+        store = makeStore();
         chain = makeChain(client);
         chain.addChainListener(this);
         // This won't actually cause any network activity yet.  We prefer network activity on the stratum client thread,
@@ -255,8 +258,16 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         client.startAsync();
     }
 
+    private HeadersStore makeStore() {
+        return new HeadersStore(wallet.getNetworkParameters(), getChainFile());
+    }
+
     private StratumChain makeChain(StratumClient client) {
-        return new StratumChain(wallet.getNetworkParameters(), new File(baseDirectory, "electrum.chain"), client);
+        return new StratumChain(wallet.getNetworkParameters(), store, client);
+    }
+
+    private File getChainFile() {
+        return new File(baseDirectory, "electrum.chain");
     }
 
     @Override
@@ -269,6 +280,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         chain = null;
         client.stopInBackground();
         client = null;
+        store.close();
+        store = null;
     }
 
     public void stop() {
@@ -282,6 +295,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         log.warn("state is {}", client.state());
         safeAwaitTerminated();
         client = null;
+        store.close();
+        store = null;
         doneWithAddressQueue();
     }
 
@@ -359,7 +374,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             @Override
             public void onSuccess(List<Integer> result) {
                 isHistorySynced = true;
-                notifyHeight(chain.getStore().getHeight());
+                notifyHeight(store.getHeight());
             }
 
             @Override
@@ -622,7 +637,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 if (first.height > height) break;
                 pendingBlock.remove(first);
                 Transaction tx = first.tx;
-                Block txBlock = chain.getStore().get(first.height);
+                Block txBlock = store.get(first.height);
                 tx.setUpdateTime(txBlock.getTime());
                 tx.getConfidence().setAppearedAtChainHeight((int)first.height);
                 txs.put(tx.getHash(), tx);
@@ -637,7 +652,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     }
 
     public int currentHeight() {
-        return (int)chain.getStore().getHeight();
+        if (store == null)
+            return 0;
+        return (int) store.getHeight();
     }
 
     @Override
@@ -663,9 +680,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         wallet.lock();
         try {
             List<StoredBlock> blocks = Lists.newArrayList();
-            long height = chain.getStore().getHeight();
+            if (store == null)
+                return Lists.newArrayList();
+            long height = store.getHeight();
             while (blocks.size() < maxBlocks && height > 0) {
-                Block block = chain.getStore().get(height);
+                Block block = store.get(height);
                 if (block == null)
                     break;
                 StoredBlock stored = new StoredBlock(block, BigInteger.ZERO, (int)height);
@@ -678,13 +697,19 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         }
     }
 
+    private void resetStore() {
+        checkState(store == null);
+        HeadersStore temp = makeStore();
+        store.truncate(RESET_HEIGHT);
+        temp.close();
+    }
+
     @Override
     public void resetBlockchain() {
         wallet.lock();
         try {
             checkState(chain == null, "must be stopped to reset");
-            StratumChain temp = makeChain(null);
-            temp.reset();
+            resetStore();
             txs.clear();
             isChainSynced = false;
             isHistorySynced = false;
@@ -701,7 +726,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         wallet.lock();
         try {
             if (height > 0) {
-                Block block = chain.getStore().get(height);
+                Block block = store.get(height);
                 if (block == null) {
                     pendingBlock.add(new TransactionWithHeight(tx, height));
                 } else {

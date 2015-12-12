@@ -23,6 +23,7 @@ public class StratumChainTest {
     private StratumChain chain;
     private StratumClient client;
     private NetworkParameters params;
+    private HeadersStore store;
 
     @Before
     public void setUp() throws IOException {
@@ -30,8 +31,8 @@ public class StratumChainTest {
         client = createMock(StratumClient.class);
         expect(client.getHeadersQueue()).andStubReturn(null);
         params = NetworkParameters.fromID(NetworkParameters.ID_UNITTESTNET);
-        chain = new StratumChain(params, file, client);
-        chain.createStore();
+        store = new HeadersStore(params, file);
+        chain = new StratumChain(params, store, client);
     }
 
     @Test
@@ -42,7 +43,7 @@ public class StratumChainTest {
         assertTrue(chain.add(block1));
         assertTrue(chain.add(block2));
         verify(client);
-        assertEquals(2, chain.getStore().getHeight());
+        assertEquals(2, store.getHeight());
     }
 
     @Test
@@ -63,14 +64,14 @@ public class StratumChainTest {
         assertTrue(chain.add(block1));
         assertTrue(chain.add(block2));
         assertFalse(chain.add(block2a));
-        assertEquals(2, chain.getStore().getHeight());
-        assertEquals(chain.getStore().top(), block2a);
+        assertEquals(2, store.getHeight());
+        assertEquals(store.top(), block2a);
         assertFalse(chain.add(block2b));
-        assertEquals(1, chain.getStore().getHeight());
-        assertEquals(chain.getStore().top(), block1b);
+        assertEquals(1, store.getHeight());
+        assertEquals(store.top(), block1b);
         assertTrue(chain.add(block2b));
-        assertEquals(2, chain.getStore().getHeight());
-        assertEquals(chain.getStore().top(), block2b);
+        assertEquals(2, store.getHeight());
+        assertEquals(store.top(), block2b);
         verify(client);
     }
 
