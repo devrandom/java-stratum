@@ -35,8 +35,7 @@ import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.*;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Preconditions.*;
 
 /**
  * Wrap a normal BitcoinJ SPV wallet
@@ -185,7 +184,98 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @Override
     public void completeTx(Wallet.SendRequest req) throws InsufficientMoneyException {
-        // FIXME
+        checkArgument(req.coinSelector instanceof BitcoinCoinSelector, "Must provide a BitcoinCoinSelector");
+        wallet.lock();
+        try {
+            // Calculate the amount of value we need to import.
+            Coin value = Coin.ZERO;
+            for (TransactionOutput output : req.tx.getOutputs()) {
+                value = value.add(output.getValue());
+            }
+
+            log.info("Completing send tx with {} outputs totalling {} (not including fees)",
+                    req.tx.getOutputs().size(), value.toFriendlyString());
+
+            // If any inputs have already been added, we don't need to get their value from wallet
+            Coin totalInput = Coin.ZERO;
+            for (TransactionInput input : req.tx.getInputs())
+                if (input.getConnectedOutput() != null)
+                    totalInput = totalInput.add(input.getConnectedOutput().getValue());
+                else
+                    log.warn("SendRequest transaction already has inputs but we don't know how much they are worth - they will be added to fee.");
+            value = value.subtract(totalInput);
+
+            List<TransactionInput> originalInputs = new ArrayList<TransactionInput>(req.tx.getInputs());
+
+            // We need to know if we need to add an additional fee because one of our values are smaller than 0.01 BTC
+            boolean needAtLeastReferenceFee = false;
+            if (req.ensureMinRequiredFee) { // min fee checking is handled later for emptyWallet
+                for (TransactionOutput output : req.tx.getOutputs())
+                    if (output.getValue().compareTo(Coin.CENT) < 0) {
+                        if (output.getValue().compareTo(output.getMinNonDustValue()) < 0)
+                            throw new Wallet.DustySendRequested();
+                        needAtLeastReferenceFee = true;
+                        break;
+                    }
+            }
+
+            // Calculate a list of ALL potential candidates for spending and then ask a coin selector to provide us
+            // with the actual outputs that'll be used to gather the required amount of value. In this way, users
+            // can customize coin selection policies.
+            //
+            // Note that this code is poorly optimized: the spend candidates only alter when transactions in the wallet
+            // change - it could be pre-calculated and held in RAM, and this is probably an optimization worth doing.
+            List<TransactionOutput> candidates = calculateAllSpendCandidates(true, false);
+
+            CoinSelection bestCoinSelection;
+            FeeCalculator.FeeCalculation feeCalculation;
+            feeCalculation = FeeCalculator.calculateFee(this, req, value, originalInputs, needAtLeastReferenceFee, candidates);
+            bestCoinSelection = feeCalculation.bestCoinSelection;
+            TransactionOutput bestChangeOutput = feeCalculation.bestChangeOutput;
+
+            for (TransactionOutput output : bestCoinSelection.gathered)
+                req.tx.addInput(output);
+
+            if (bestChangeOutput != null) {
+                req.tx.addOutput(bestChangeOutput);
+                log.info("  with {} change", bestChangeOutput.getValue().toFriendlyString());
+            }
+
+            // Now shuffle the outputs to obfuscate which is the change.
+            if (req.shuffleOutputs)
+                req.tx.shuffleOutputs();
+
+            // Now sign the inputs, thus proving that we are entitled to redeem the connected outputs.
+            if (req.signInputs) {
+                wallet.signTransaction(req);
+            }
+
+            // Check size.
+            int size = req.tx.bitcoinSerialize().length;
+            if (size > Transaction.MAX_STANDARD_TX_SIZE)
+                throw new Wallet.ExceededMaxTransactionSize();
+
+            final Coin calculatedFee = req.tx.getFee();
+            if (calculatedFee != null) {
+                log.info("  with a fee of {}", calculatedFee.toFriendlyString());
+            }
+
+            // Label the transaction as being self created. We can use this later to spend its change output even before
+            // the transaction is confirmed. We deliberately won't bother notifying listeners here as there's not much
+            // point - the user isn't interested in a confidence transition they made themselves.
+            req.tx.getConfidence(wallet.getContext()).setSource(TransactionConfidence.Source.SELF);
+            // Label the transaction as being a user requested payment. This can be used to render GUI wallet
+            // transaction lists more appropriately, especially when the wallet starts to generate transactions itself
+            // for internal purposes.
+            req.tx.setPurpose(Transaction.Purpose.USER_PAYMENT);
+            // Record the exchange rate that was valid when the transaction was completed.
+            req.tx.setExchangeRate(req.exchangeRate);
+            req.tx.setMemo(req.memo);
+            req.fee = calculatedFee;
+            log.info("  completed: {}", req.tx);
+        } finally {
+            wallet.unlock();
+        }
     }
 
     @Override
@@ -218,7 +308,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @Override
     public ListenableFuture<Transaction> broadcastTransaction(final Transaction tx) {
-        ListenableFuture<StratumMessage> future = client.call("blockchain.transaction.broadcast", Utils.HEX.encode(tx.bitcoinSerialize()));
+        ListenableFuture<StratumMessage> future = client.callAsync("blockchain.transaction.broadcast", Utils.HEX.encode(tx.bitcoinSerialize()));
         return Futures.transform(future, new Function<StratumMessage, Transaction>() {
             @Override
             public Transaction apply(StratumMessage input) {

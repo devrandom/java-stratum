@@ -263,7 +263,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                 Executors.newSingleThreadScheduledExecutor(pingerThreadFactory);
         private ScheduledFuture<?> handle;
         private boolean first = true;
-        private ListenableFuture<StratumMessage> future;
+        private SettableFuture<StratumMessage> future;
 
         public void start() {
             checkState(handle == null);
@@ -304,7 +304,8 @@ public class StratumClient extends AbstractExecutionThreadService {
             }
             // Keep a copy of the socket so we don't close a new one due to race in onFailure
             final Socket mySocket = socket;
-            future = call("server.version", Lists.<Object>newArrayList("JavaStratumClient 0.1"), false);
+            future = SettableFuture.create();
+            call("server.version", Lists.<Object>newArrayList("JavaStratumClient 0.1"), false, future);
             Futures.addCallback(future, new FutureCallback<StratumMessage>() {
                 @Override
                 public void onSuccess(StratumMessage result) {
@@ -317,7 +318,7 @@ public class StratumClient extends AbstractExecutionThreadService {
                 }
 
                 @Override
-                public void onFailure(Throwable t) {
+                public void onFailure(Throwable ignored1) {
                     logger.error("ping failure");
                     try {
                         mySocket.close();
@@ -457,21 +458,40 @@ public class StratumClient extends AbstractExecutionThreadService {
         return call(method, Lists.<Object>newArrayList(param));
     }
 
+    public ListenableFuture<StratumMessage> callAsync(String method, String param) {
+        return callAsync(method, Lists.<Object>newArrayList(param));
+    }
+
     public ListenableFuture<StratumMessage> call(String method, long param) {
         return call(method, Lists.<Object>newArrayList(param));
     }
 
     public ListenableFuture<StratumMessage> call(String method, List<Object> params) {
-        return call(method, params, isQueue);
+        SettableFuture<StratumMessage> future = SettableFuture.create();
+        call(method, params, isQueue, future);
+        return future;
     }
 
-    public ListenableFuture<StratumMessage> call(String method, List<Object> params, boolean doQueue) {
+    public ListenableFuture<StratumMessage> callAsync(final String method, final List<Object> params) {
+        final SettableFuture<StratumMessage> future = SettableFuture.create();
+        // TODO convert to executor
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                call(method, params, isQueue, future);
+            }
+        });
+        thread.setName("call-thread");
+        thread.start();
+        return future;
+    }
+
+    public void call(String method, List<Object> params, boolean doQueue, SettableFuture<StratumMessage> future) {
         StratumMessage message = new StratumMessage(currentId.getAndIncrement(), method, params, mapper);
-        SettableFuture<StratumMessage> future = SettableFuture.create();
         lock.lock();
         try {
             if (!isRunning())
-                return null;
+                future.setException(new RuntimeException("not running"));
             calls.put(message.id, new PendingCall(message, future));
             if (isConnected && !doQueue) {
                 writeMessage(message);
@@ -479,7 +499,6 @@ public class StratumClient extends AbstractExecutionThreadService {
         } finally {
             lock.unlock();
         }
-        return future;
     }
 
     /**
