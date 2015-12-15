@@ -3,6 +3,7 @@ package org.smartwallet.stratum;
 import com.google.common.base.Throwables;
 import org.bitcoinj.core.Block;
 import org.bitcoinj.core.NetworkParameters;
+import org.bitcoinj.core.StoredBlock;
 import org.bitcoinj.utils.Threading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static com.google.common.base.Preconditions.checkState;
@@ -22,13 +24,15 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class HeadersStore {
     private static final Logger log = LoggerFactory.getLogger(HeadersStore.class);
+    private static final long HEADER_SIZE = Block.HEADER_SIZE;
+    private static final byte[] EMPTY = new byte[(int)HEADER_SIZE];
     protected final NetworkParameters params;
     protected FileChannel channel;
     protected FileLock fileLock = null;
     protected RandomAccessFile randomFile = null;
     protected ReentrantLock lock = Threading.lock("HeadersStore");
 
-    public HeadersStore(NetworkParameters params, File file) {
+    public HeadersStore(NetworkParameters params, File file, StoredBlock checkpoint) {
         this.params = params;
         try {
             // Set up the backing file.
@@ -37,14 +41,17 @@ public class HeadersStore {
             fileLock = channel.tryLock();
             if (fileLock == null)
                 throw new RuntimeException("Store file is already locked by another process");
-            if ((randomFile.length() % Block.HEADER_SIZE) != 0) {
+            if ((randomFile.length() % HEADER_SIZE) != 0) {
                 log.warn("file length not round multiple of header size {}", randomFile.length());
                 channel.truncate(0);
             }
-            channel.position(0);
             if (channel.size() == 0) {
-                Block genesis = params.getGenesisBlock().cloneAsHeader();
-                channel.write(ByteBuffer.wrap(genesis.bitcoinSerialize()), channel.size());
+                if (checkpoint != null) {
+                    Block header = checkpoint.getHeader().cloneAsHeader();
+                    channel.write(ByteBuffer.wrap(header.bitcoinSerialize()), checkpoint.getHeight() * HEADER_SIZE);
+                } else {
+                    channel.write(ByteBuffer.wrap(params.getGenesisBlock().cloneAsHeader().bitcoinSerialize()), 0);
+                }
             }
         } catch (IOException e) {
             if (randomFile != null)
@@ -57,17 +64,23 @@ public class HeadersStore {
         }
     }
 
-    /** Get the block at height index. */
+    /**
+     * Get the block at height index.
+     *
+     * Returns null if we didn't see the block yet, or if we started at a checkpoint after the block.
+     */
     public Block get(long index) {
         lock.lock();
         try {
-            if (channel.size() < (index+1) * Block.HEADER_SIZE)
+            if (channel.size() < (index+1) * HEADER_SIZE)
                 return null;
-            ByteBuffer b = ByteBuffer.allocate(Block.HEADER_SIZE);
-            int n = channel.read(b, index * Block.HEADER_SIZE);
+            ByteBuffer b = ByteBuffer.allocate((int)HEADER_SIZE);
+            int n = channel.read(b, index * HEADER_SIZE);
             if (n == 0) return null;
-            if (n != Block.HEADER_SIZE)
+            if (n != HEADER_SIZE)
                 throw new RuntimeException("partial read from store file");
+            if (Arrays.equals(b.array(), EMPTY))
+                return null;
             return new Block(params, b.array());
         } catch (IOException e) {
             throw Throwables.propagate(e);
@@ -89,7 +102,7 @@ public class HeadersStore {
     public long getHeight() {
         lock.lock();
         try {
-            return channel.size() / Block.HEADER_SIZE - 1;
+            return channel.size() / HEADER_SIZE - 1;
         } catch (IOException e) {
             throw Throwables.propagate(e);
         } finally {
@@ -101,7 +114,7 @@ public class HeadersStore {
     public void truncate(long index) {
         lock.lock();
         try {
-            channel.truncate((index + 1) * Block.HEADER_SIZE);
+            channel.truncate((index + 1) * HEADER_SIZE);
         } catch (IOException e) {
             Throwables.propagate(e);
         } finally {

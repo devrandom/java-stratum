@@ -66,6 +66,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private boolean isChainSynced;
     private boolean isHistorySynced;
     private ListenableFuture<List<Integer>> downloadFuture;
+    private CheckpointManager checkpoints;
 
     /**
      * The constructor will add this object as an extension to the wallet.
@@ -93,6 +94,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     @Override
     public void addEventListener(MultiWalletEventListener listener, Executor executor) {
         eventListeners.add(new ListenerRegistration<>(listener, executor));
+    }
+
+    public void setCheckpoints(CheckpointManager checkpoints) {
+        this.checkpoints = checkpoints;
     }
 
     @Override
@@ -353,7 +358,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     }
 
     private HeadersStore makeStore() {
-        return new HeadersStore(wallet.getNetworkParameters(), getChainFile());
+        StoredBlock checkpoint = null;
+        if (checkpoints != null) {
+            checkpoint = checkpoints.getCheckpointBefore(wallet.getEarliestKeyCreationTime());
+        }
+        return new HeadersStore(wallet.getNetworkParameters(), getChainFile(), checkpoint);
     }
 
     private StratumChain makeChain(StratumClient client) {

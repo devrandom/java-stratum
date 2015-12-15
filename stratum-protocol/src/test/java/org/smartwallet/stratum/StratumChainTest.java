@@ -9,6 +9,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.concurrent.ExecutionException;
 
 import static com.google.common.util.concurrent.Futures.immediateFuture;
@@ -31,8 +32,26 @@ public class StratumChainTest {
         client = createMock(StratumClient.class);
         expect(client.getHeadersQueue()).andStubReturn(null);
         params = NetworkParameters.fromID(NetworkParameters.ID_UNITTESTNET);
-        store = new HeadersStore(params, file);
+        //new CheckpointManager(params, new ByteArrayInputStream("TXT CHECKPOINTS 1\n0\n0\n".getBytes("UTF-8")))
+        store = new HeadersStore(params, file, null);
         chain = new StratumChain(params, store, client);
+    }
+
+    @Test
+    public void checkpoint() throws IOException, ExecutionException, InterruptedException {
+        Block block1 = makeBlock(params.getGenesisBlock().getHash());
+        Block block2 = makeBlock(block1.getHash());
+        File file1 = File.createTempFile("stratum-chain1", ".chain");
+        HeadersStore store1 = new HeadersStore(params, file1, new StoredBlock(block1, BigInteger.ZERO, 1));
+        StratumChain chain1 = new StratumChain(params, store1, client);
+        replay(client);
+        assertEquals(1, store1.getHeight());
+        assertTrue(chain1.add(block2));
+        assertEquals(2, store1.getHeight());
+        assertNull(store1.get(0));
+        assertEquals(block1, store1.get(1));
+        assertEquals(block2, store1.get(2));
+        verify(client);
     }
 
     @Test
@@ -42,8 +61,11 @@ public class StratumChainTest {
         replay(client);
         assertTrue(chain.add(block1));
         assertTrue(chain.add(block2));
-        verify(client);
         assertEquals(2, store.getHeight());
+        assertEquals(params.getGenesisBlock(), store.get(0));
+        assertEquals(block1, store.get(1));
+        assertEquals(block2, store.get(2));
+        verify(client);
     }
 
     @Test
