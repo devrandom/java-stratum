@@ -49,6 +49,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     public static final String EXTENSION_ID = "org.smartcolors.electrum";
 
     private static final Map<Sha256Hash, Transaction> EMPTY_POOL = Maps.newHashMap();
+    public static final int CHECKPOINT_TIME_BUFFER = 3600 * 24 * 1;
     private final File baseDirectory;
     private HeadersStore store;
 
@@ -360,7 +361,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private HeadersStore makeStore() {
         StoredBlock checkpoint = null;
         if (checkpoints != null) {
-            checkpoint = checkpoints.getCheckpointBefore(wallet.getEarliestKeyCreationTime());
+            checkpoint = checkpoints.getCheckpointBefore(wallet.getEarliestKeyCreationTime() - CHECKPOINT_TIME_BUFFER);
         }
         return new HeadersStore(wallet.getNetworkParameters(), getChainFile(), checkpoint);
     }
