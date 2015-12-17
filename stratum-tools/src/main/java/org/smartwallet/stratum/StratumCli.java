@@ -2,16 +2,13 @@ package org.smartwallet.stratum;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
-import org.bitcoinj.core.Address;
-import org.bitcoinj.core.AddressFormatException;
-import org.bitcoinj.core.NetworkParameters;
+import org.bitcoinj.core.*;
 import org.bitcoinj.utils.BriefLogFormatter;
 import org.jboss.aesh.cl.Arguments;
 import org.jboss.aesh.cl.CommandDefinition;
@@ -36,11 +33,15 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
+
+import static com.google.common.base.Throwables.propagate;
 
 /**
  * Created by devrandom on 2015-Aug-30.
@@ -51,6 +52,7 @@ public class StratumCli {
     protected static Logger log = LoggerFactory.getLogger("StratumCli");
     private static OptionParser parser;
     private static OptionSet options;
+    private static String net;
 
     private StratumClient client;
     private AeshConsole console;
@@ -77,7 +79,6 @@ public class StratumCli {
         }
 
         options = parser.parse(args);
-        String net;
         if (options.has("prod")) {
             net = "prodnet";
             params = NetworkParameters.fromID(NetworkParameters.ID_MAINNET);
@@ -105,10 +106,22 @@ public class StratumCli {
         }
     }
 
+    private static InputStream openResource(String path) {
+        ClassLoader classloader = Thread.currentThread().getContextClassLoader();
+        return classloader.getResourceAsStream(path);
+    }
+
     private void run(List<InetSocketAddress> addresses) {
         mapper = new ObjectMapper();
         client = new StratumClient(params, addresses, true);
-        store = new HeadersStore(params, new File("stratum.chain"));
+        InputStream checkpointsInputStream = openResource(String.format("checkpoints-%s.txt", net));
+        CheckpointManager checkpoints;
+        try {
+            checkpoints = new CheckpointManager(params, checkpointsInputStream);
+        } catch (IOException e) {
+            throw propagate(e);
+        }
+        store = new HeadersStore(params, new File("stratum.chain"), checkpoints.getCheckpointBefore(new Date().getTime()));
         chain = new StratumChain(params, store, client);
         client.startAsync();
         chain.startAsync();
@@ -404,7 +417,7 @@ public class StratumCli {
         try {
             return mapper.writeValueAsString(result.result);
         } catch (JsonProcessingException e) {
-            throw Throwables.propagate(e);
+            throw propagate(e);
         }
     }
 
@@ -441,7 +454,7 @@ public class StratumCli {
                                 }
                                 println(mapper.writeValueAsString(item));
                             } catch (InterruptedException | JsonProcessingException e) {
-                                throw Throwables.propagate(e);
+                                throw propagate(e);
                             }
                         }
                     }
@@ -481,7 +494,7 @@ public class StratumCli {
                                 }
                                 println(mapper.writeValueAsString(item));
                             } catch (InterruptedException | JsonProcessingException e) {
-                                throw Throwables.propagate(e);
+                                throw propagate(e);
                             }
                         }
                     }
