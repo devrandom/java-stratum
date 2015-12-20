@@ -16,6 +16,7 @@ import java.util.concurrent.*;
  * Created by devrandom on 2015-Nov-08.
  */
 public class StratumChain extends AbstractExecutionThreadService {
+    public static final int MAX_REORG = 16384;
     protected static Logger log = LoggerFactory.getLogger("StratumChain");
     private HeadersStore store;
     private BlockingQueue<StratumMessage> queue;
@@ -121,22 +122,24 @@ public class StratumChain extends AbstractExecutionThreadService {
         long storeHeight = store.getHeight();
 
         // Find a spot in our local store where the block connects to the block we get from the server.
-        for (int i = 0 ; i < 100 ; i++) {
-            Block storePrev = store.get(storeHeight - i - 1);
-            log.info("reorg to height {} our prev {}", storeHeight - i, storePrev.getHash());
+        // Exponential jumps (1,2,4,8...)
+        for (int i = 1 ; i <= MAX_REORG && i <= storeHeight; i += i) {
+            Block storePrev = store.get(storeHeight - i);
+            log.info("reorg to height {} our prev {}", storeHeight - i + 1, storePrev.getHash());
             ListenableFuture<StratumMessage> future =
-                    client.call("blockchain.block.get_header", storeHeight - i);
+                    client.call("blockchain.block.get_header", storeHeight - i + 1);
             StratumMessage item = future.get();
             Block block = makeBlock(item.result);
             if (block.getPrevBlockHash().equals(storePrev.getHash())) {
                 // Found the spot.  Truncate blocks beyond it, and add the block from the server.
-                store.truncate(storeHeight - i - 1);
+                store.truncate(storeHeight - i);
                 if (!store.add(block))
                     throw new IllegalStateException("could not add block during reorg");
                 return;
             }
         }
-        throw new RuntimeException("could not find a reorg point within 100 blocks");
+        // TODO limit reorg to previous checkpoint
+        throw new RuntimeException("could not find a reorg point within " + MAX_REORG + " blocks");
     }
 
     private boolean download(long height) throws InterruptedException, CancellationException, ExecutionException {
