@@ -81,9 +81,40 @@ public class ElectrumMultiWalletTest {
         assertEquals(1, multiWallet.getTransactions().size());
     }
 
+    @Test
+    public void testPendingToConfirmed() throws Exception {
+        ECKey key = new ECKey();
+        String address = key.toAddress(params).toString();
+        Transaction tx = new Transaction(params, Utils.HEX.decode(TEST_TX));
+        supplyUnconfirmedTransactionForAddress(address, tx);
+        supplyTransactionForAddress(address, tx);
+        control.replay();
+        multiWallet.retrieveAddressHistory(address);
+        assertEquals(1, multiWallet.getTransactions().size());
+        TransactionConfidence confidence = multiWallet.getTransactions().iterator().next().getConfidence();
+        assertEquals(ConfidenceType.PENDING, confidence.getConfidenceType());
+
+        multiWallet.retrieveAddressHistory(address);
+        assertEquals(1, multiWallet.getTransactions().size());
+        Transaction tx1 = multiWallet.getTransactions().iterator().next();
+        assertEquals(ConfidenceType.BUILDING, tx1.getConfidence().getConfidenceType());
+        assertEquals(params.getGenesisBlock().getTime(), tx1.getUpdateTime());
+        control.verify();
+    }
+
     private void supplyTransactionForAddress(String address, Transaction tx) throws IOException {
         JsonNode historyResult =
                 mapper.readTree("[{\"tx_hash\": \"" + tx.getHashAsString() + "\", \"height\": 340242}]");
+        ListenableFuture<StratumMessage> addressFuture = Futures.immediateFuture(new StratumMessage(1L, historyResult));
+        expect(client.call("blockchain.address.get_history", address)).andReturn(addressFuture);
+        ListenableFuture<StratumMessage> txFuture = Futures.immediateFuture(new StratumMessage(2L, mapper.valueToTree(Utils.HEX.encode(tx.bitcoinSerialize()))));
+        expect(client.call("blockchain.transaction.get", tx.getHashAsString()))
+                .andReturn(txFuture);
+    }
+
+    private void supplyUnconfirmedTransactionForAddress(String address, Transaction tx) throws IOException {
+        JsonNode historyResult =
+                mapper.readTree("[{\"tx_hash\": \"" + tx.getHashAsString() + "\", \"height\": 0}]");
         ListenableFuture<StratumMessage> addressFuture = Futures.immediateFuture(new StratumMessage(1L, historyResult));
         expect(client.call("blockchain.address.get_history", address)).andReturn(addressFuture);
         ListenableFuture<StratumMessage> txFuture = Futures.immediateFuture(new StratumMessage(2L, mapper.valueToTree(Utils.HEX.encode(tx.bitcoinSerialize()))));

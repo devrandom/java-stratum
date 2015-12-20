@@ -662,7 +662,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 final List<ListenableFuture<Transaction>> futures = Lists.newArrayList();
                 for (AddressHistoryItem item : history) {
                     Sha256Hash hash = Sha256Hash.wrap(item.txHash);
-                    if (txs.containsKey(hash) || pendingDownload.containsKey(hash))
+                    // If we are already downloading this, ignore
+                    if (pendingDownload.containsKey(hash))
+                        continue;
+                    Transaction existing = txs.get(hash);
+                    // If we already have the confirmed tx, ignore
+                    // TODO handle reorg that makes confirmed tx pending
+                    if (existing != null && !existing.isPending())
                         continue;
                     SettableFuture<Transaction> future = addPendingDownload(hash);
                     retrieveTransaction(hash, item.height);
@@ -804,7 +810,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private void resetStore() {
         checkState(store == null);
         HeadersStore temp = makeStore();
-        store.truncate(RESET_HEIGHT);
+        temp.truncate(RESET_HEIGHT);
         temp.close();
     }
 
@@ -843,6 +849,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 }
             } else {
                 log.info("unconfirmed {}", tx.getHash());
+                tx.setUpdateTime(new Date());
+                confidence.setConfidenceType(ConfidenceType.PENDING);
                 pendingDownload.remove(tx.getHash()).set(tx);
                 txs.put(tx.getHash(), tx);
                 saveLater();
