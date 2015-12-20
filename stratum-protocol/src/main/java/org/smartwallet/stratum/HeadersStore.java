@@ -148,7 +148,7 @@ public class HeadersStore {
         Block last = get(start);
         for (long i = start + 1 ; i <= end ; i++) {
             Block block = get(i);
-            if (!block.getPrevBlockHash().equals(last.getHash())) {
+            if (last != null && !block.getPrevBlockHash().equals(last.getHash())) {
                 throw new IllegalStateException("invalid at " + i);
             }
             last = block;
