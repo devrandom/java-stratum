@@ -2,6 +2,7 @@ package org.smartwallet.multi;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.ComparisonChain;
+import com.google.common.primitives.UnsignedBytes;
 import org.bitcoinj.core.Transaction;
 
 /**
@@ -20,7 +21,7 @@ public class TransactionWithHeight implements Comparable<TransactionWithHeight> 
     public int compareTo(TransactionWithHeight o) {
         return ComparisonChain.start()
                 .compare(height, o.height)
-                .compare(tx.getHash(), o.tx.getHash())
+                .compare(UnsignedBytes.lexicographicalComparator().compare(tx.getHash().getBytes(), o.tx.getHash().getBytes()), 0)
                 .result();
     }
 

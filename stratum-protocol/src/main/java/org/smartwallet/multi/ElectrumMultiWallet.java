@@ -753,7 +753,9 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 txs.put(tx.getHash(), tx);
                 log.info("reached block for {}", tx.getHash());
                 SettableFuture<Transaction> future = pendingDownload.remove(tx.getHash());
-                future.set(tx);
+                // TODO contract that future can't be null
+                if (future != null)
+                    future.set(tx);
                 saveLater();
             }
         } finally {
