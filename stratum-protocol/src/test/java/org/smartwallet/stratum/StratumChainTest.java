@@ -42,15 +42,16 @@ public class StratumChainTest {
         Block block1 = makeBlock(params.getGenesisBlock().getHash());
         Block block2 = makeBlock(block1.getHash());
         File file1 = File.createTempFile("stratum-chain1", ".chain");
-        HeadersStore store1 = new HeadersStore(params, file1, new StoredBlock(block1, BigInteger.ZERO, 1));
+        HeadersStore store1 = new HeadersStore(params, file1, new StoredBlock(block1, BigInteger.ZERO, 10));
         StratumChain chain1 = new StratumChain(params, store1, client);
         replay(client);
-        assertEquals(1, store1.getHeight());
+        assertEquals(10, store1.getHeight());
         assertTrue(chain1.add(block2));
-        assertEquals(2, store1.getHeight());
-        assertNull(store1.get(0));
-        assertEquals(block1, store1.get(1));
-        assertEquals(block2, store1.get(2));
+        assertEquals(11, store1.getHeight());
+        assertNotNull(store1.get(0));
+        assertNull(store1.get(1));
+        assertEquals(block1, store1.get(10));
+        assertEquals(block2, store1.get(11));
         verify(client);
     }
 

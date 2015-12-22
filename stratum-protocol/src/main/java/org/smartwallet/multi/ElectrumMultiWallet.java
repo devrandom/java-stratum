@@ -45,7 +45,6 @@ import static com.google.common.base.Preconditions.*;
 public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExtension, StratumChain.Listener {
     protected static final Logger log = LoggerFactory.getLogger(ElectrumMultiWallet.class);
 
-    public static final int RESET_HEIGHT = 300000;
     public static final String EXTENSION_ID = "org.smartcolors.electrum";
 
     private static final Map<Sha256Hash, Transaction> EMPTY_POOL = Maps.newHashMap();
@@ -359,11 +358,16 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     }
 
     private HeadersStore makeStore() {
+        StoredBlock checkpoint = getCheckpoint();
+        return new HeadersStore(wallet.getNetworkParameters(), getChainFile(), checkpoint);
+    }
+
+    private StoredBlock getCheckpoint() {
         StoredBlock checkpoint = null;
         if (checkpoints != null) {
             checkpoint = checkpoints.getCheckpointBefore(wallet.getEarliestKeyCreationTime() - CHECKPOINT_TIME_BUFFER);
         }
-        return new HeadersStore(wallet.getNetworkParameters(), getChainFile(), checkpoint);
+        return checkpoint;
     }
 
     private StratumChain makeChain(StratumClient client) {
@@ -812,7 +816,15 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private void resetStore() {
         checkState(store == null);
         HeadersStore temp = makeStore();
-        temp.truncate(RESET_HEIGHT);
+        // If we have checkpoints, truncate to the last checkpoint before wallet creation time.
+        // If we don't, truncate to genesis just in case.  This shouldn't happen, since we should always use checkpoints.
+        // We have to make sure that we don't truncate to before the original checkpoint, or we might end up with a
+        // zeroed out block header.  Truncating to genesis always works because it's always written.
+        StoredBlock checkpoint = getCheckpoint();
+        if (checkpoint != null)
+            temp.truncate(checkpoint.getHeight());
+        else
+            temp.truncate(0);
         temp.close();
     }
 

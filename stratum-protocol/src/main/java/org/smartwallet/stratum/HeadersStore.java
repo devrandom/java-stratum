@@ -46,11 +46,11 @@ public class HeadersStore {
                 channel.truncate(0);
             }
             if (channel.size() == 0) {
+                // Write genesis anyway
+                channel.write(ByteBuffer.wrap(params.getGenesisBlock().cloneAsHeader().bitcoinSerialize()), 0);
                 if (checkpoint != null) {
                     Block header = checkpoint.getHeader().cloneAsHeader();
                     channel.write(ByteBuffer.wrap(header.bitcoinSerialize()), checkpoint.getHeight() * HEADER_SIZE);
-                } else {
-                    channel.write(ByteBuffer.wrap(params.getGenesisBlock().cloneAsHeader().bitcoinSerialize()), 0);
                 }
             }
         } catch (IOException e) {
@@ -114,6 +114,9 @@ public class HeadersStore {
     public void truncate(long index) {
         lock.lock();
         try {
+            Block block = get(index);
+            if (block == null)
+                throw new RuntimeException("trying to truncate to a block we don't have " + index);
             channel.truncate((index + 1) * HEADER_SIZE);
         } catch (IOException e) {
             Throwables.propagate(e);
