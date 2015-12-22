@@ -818,11 +818,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         HeadersStore temp = makeStore();
         // If we have checkpoints, truncate to the last checkpoint before wallet creation time.
         // If we don't, truncate to genesis just in case.  This shouldn't happen, since we should always use checkpoints.
-        // We have to make sure that we don't truncate to before the original checkpoint, or we might end up with a
-        // zeroed out block header.  Truncating to genesis always works because it's always written.
+        // We have to make sure that we don't truncate to before the original checkpoint without providing a new checkpoint
+        // or we might end up with a zeroed out block header.  Truncating to genesis always works because it's always written.
         StoredBlock checkpoint = getCheckpoint();
         if (checkpoint != null)
-            temp.truncate(checkpoint.getHeight());
+            temp.truncate(checkpoint);
         else
             temp.truncate(0);
         temp.close();

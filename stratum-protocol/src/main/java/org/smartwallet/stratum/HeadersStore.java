@@ -125,6 +125,22 @@ public class HeadersStore {
         }
     }
 
+
+    public void truncate(StoredBlock checkpoint) {
+        int index = checkpoint.getHeight();
+        lock.lock();
+        try {
+            Block block = get(index);
+            if (block == null)
+                channel.write(ByteBuffer.wrap(checkpoint.getHeader().cloneAsHeader().bitcoinSerialize()), index * HEADER_SIZE);
+            channel.truncate((index + 1) * HEADER_SIZE);
+        } catch (IOException e) {
+            Throwables.propagate(e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public boolean add(Block block) {
         checkState(block.getTransactions() == null);
         lock.lock();
