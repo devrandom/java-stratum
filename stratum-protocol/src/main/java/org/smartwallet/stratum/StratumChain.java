@@ -11,15 +11,15 @@ import java.util.Arrays;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static com.google.common.base.Throwables.propagate;
+import static com.google.common.base.Preconditions.checkState;
+import static org.smartwallet.stratum.StratumClient.BLOCKCHAIN_GET_CHUNK;
+import static org.smartwallet.stratum.StratumClient.BLOCKCHAIN_GET_HEADER;
 
 /**
  * Created by devrandom on 2015-Nov-08.
  */
 public class StratumChain extends AbstractExecutionThreadService {
     public static final int MAX_REORG = 16384;
-    public static final String GET_HEADER = "blockchain.block.get_header";
-    public static final String GET_CHUNK = "blockchain.block.get_chunk";
     protected static Logger log = LoggerFactory.getLogger("StratumChain");
     private HeadersStore store;
     private BlockingQueue<StratumMessage> queue;
@@ -90,22 +90,60 @@ public class StratumChain extends AbstractExecutionThreadService {
                 return;
             }
             JsonNode result = item.result != null ? item.result : item.params.get(0);
-            long height = result.get("block_height").longValue();
-            peerHeight = height;
-            Block block = makeBlock(result);
-            log.info("block {} @{}", height, block.getTime());
-            try {
-                if (store.getHeight() >= height - 1) {
-                    add(block);
-                    notifyHeight();
+            handleBlock(result);
+        }
+    }
+
+    boolean handleBlock(JsonNode result) {
+        long height = result.get("block_height").longValue();
+        Block block = makeBlock(result);
+        return handleBlock(height, block);
+    }
+
+    boolean handleBlock(long height, Block block) {
+        long storeHeight = store.getHeight();
+        log.info("block {} @{}, ours {}", height, block.getTime(), storeHeight);
+        try {
+            if (storeHeight > height - 1) {
+                // Store is higher - we are in reorg
+                Block storePrev = store.get(height - 1);
+                // Check if our previous equals peer previous
+                if (block.getPrevBlockHash().equals(storePrev.getHash())) {
+                    // Found the reorg spot.  Truncate blocks beyond it, and fall through to add the block from the server.
+                    store.truncate(height - 1);
+                    storeHeight = store.getHeight();
                 } else {
-                    download(height - 1);
+                    // Not at the spot, ask block that is twice as old
+                    long delta = storeHeight - height + 1;
+                    if (delta * 2 > MAX_REORG)
+                        throw new RuntimeException("could not find a reorg point within " + MAX_REORG + " blocks");
+                    client.call(BLOCKCHAIN_GET_HEADER, height - delta);
+                    return false;
                 }
-            } catch (CancellationException e) {
-                log.error("failed to download chain at height {}", height - 1);
-                // Will retry on next time we get a message
             }
-            log.info("store is at height {}", store.getHeight());
+
+            checkState(storeHeight <= height - 1);
+            if (storeHeight == height - 1) {
+                // We are caught up, add the block
+                if (store.add(block)) {
+                    client.call(BLOCKCHAIN_GET_HEADER, height + 1); // ask for next
+                    notifyHeight();
+                    return true;
+                } else {
+                    // Start a reorg by asking for previous
+                    client.call(BLOCKCHAIN_GET_HEADER, height - 1);
+                    return false;
+                }
+            } else {
+                peerHeight = height;
+                // We are not caught up, start or continue download
+                download(height - 1);
+                return false;
+            }
+        } catch (CancellationException e) {
+            log.error("failed to download chain at height {}", height - 1);
+            return false;
+            // Will retry on next time we get a message
         }
     }
 
@@ -119,51 +157,15 @@ public class StratumChain extends AbstractExecutionThreadService {
         }
     }
 
-    boolean add(Block block) {
-        if (!store.add(block)) {
-            try {
-                reorg();
-            } catch (ExecutionException | InterruptedException e) {
-                throw propagate(e);
-            }
-            return false;
-        }
-        return true;
-    }
-
-    void reorg() throws ExecutionException, InterruptedException {
-        long storeHeight = store.getHeight();
-
-        // Find a spot in our local store where the block connects to the block we get from the server.
-        // Exponential jumps (1,2,4,8...)
-        for (int i = 1 ; i <= MAX_REORG && i <= storeHeight; i += i) {
-            Block storePrev = store.get(storeHeight - i);
-            log.info("reorg to height {} our prev {}", storeHeight - i + 1, storePrev.getHash());
-            ListenableFuture<StratumMessage> future =
-                    client.call(GET_HEADER, storeHeight - i + 1);
-            StratumMessage item = future.get();
-            Block block = makeBlock(item.result);
-            if (block.getPrevBlockHash().equals(storePrev.getHash())) {
-                // Found the spot.  Truncate blocks beyond it, and add the block from the server.
-                store.truncate(storeHeight - i);
-                if (!store.add(block))
-                    throw new IllegalStateException("could not add block during reorg");
-                return;
-            }
-        }
-        // TODO limit reorg to previous checkpoint
-        throw new RuntimeException("could not find a reorg point within " + MAX_REORG + " blocks");
-    }
-
     // Keep track of current download, so further calls to download from top level will cancel download in progress
     AtomicLong downloadId = new AtomicLong();
 
-    private void download(final long height) {
+    private void download(final long toHeight) {
         final long id = downloadId.incrementAndGet();
-        if (height > store.getHeight() + 50) {
+        if (toHeight > store.getHeight() + 50) {
             long index = (store.getHeight() + 1) / NetworkParameters.INTERVAL;
             log.info("at chunk height {}, id {}", index * NetworkParameters.INTERVAL, id);
-            ListenableFuture<StratumMessage> future = client.call(GET_CHUNK, index);
+            ListenableFuture<StratumMessage> future = client.call(BLOCKCHAIN_GET_CHUNK, index);
             Futures.addCallback(future, new FutureCallback<StratumMessage>() {
                 @Override
                 public void onSuccess(StratumMessage item) {
@@ -171,8 +173,8 @@ public class StratumChain extends AbstractExecutionThreadService {
                         log.info("new download started {}, aborting this one", downloadId.get());
                         return;
                     }
-                    handleChunk(item);
-                    download(height);
+                    if (handleChunk(item))
+                        download(toHeight);
                 }
 
                 @Override
@@ -180,44 +182,27 @@ public class StratumChain extends AbstractExecutionThreadService {
                 }
             });
         }
-        else if (height > store.getHeight()) {
+        else if (toHeight > store.getHeight()) {
             log.info("adding block, store height={}, id = {}", store.getHeight(), id);
-            ListenableFuture<StratumMessage> future = client.call("blockchain.block.get_header", store.getHeight() + 1);
-            Futures.addCallback(future, new FutureCallback<StratumMessage>() {
-                @Override
-                public void onSuccess(StratumMessage item) {
-                    if (id != downloadId.get()) {
-                        log.info("new download started {}, aborting this one", downloadId.get());
-                        return;
-                    }
-                    handleBlock(item);
-                    download(height);
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                }
-            });
+            client.call("blockchain.block.get_header", store.getHeight() + 1);
         }
     }
 
-    private void handleBlock(StratumMessage item) {
-        Block block = makeBlock(item.result);
-        add(block);
-        notifyHeight();
-    }
-
-    private void handleChunk(StratumMessage item) {
+    private boolean handleChunk(StratumMessage item) {
         byte[] data = Utils.HEX.decode(item.result.asText());
         int num = data.length / Block.HEADER_SIZE;
         log.info("chunk size {}", num);
-        int start = (int) (store.getHeight() + 1) % NetworkParameters.INTERVAL;
+        long storeHeight = store.getHeight();
+        int start = (int) (storeHeight + 1) % NetworkParameters.INTERVAL;
         for (int i = start ; i < num ; i++) {
             Block block = new Block(params, Arrays.copyOfRange(data, i * Block.HEADER_SIZE, (i + 1) * Block.HEADER_SIZE));
-            if (!add(block))
-                break; // Had a reorg, add one by one at new height
+            if (!store.add(block)) {
+                client.call("blockchain.block.get_header", storeHeight - 1); // Initiate a reorg
+                return false;
+            }
         }
         notifyHeight();
+        return true;
     }
 
     private Block makeBlock(JsonNode result) {

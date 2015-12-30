@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.util.concurrent.ExecutionException;
 
-import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static org.easymock.EasyMock.*;
 import static org.junit.Assert.*;
 
@@ -44,9 +43,10 @@ public class StratumChainTest {
         File file1 = File.createTempFile("stratum-chain1", ".chain");
         HeadersStore store1 = new HeadersStore(params, file1, new StoredBlock(block1, BigInteger.ZERO, 10));
         StratumChain chain1 = new StratumChain(params, store1, client);
+        expect(client.call("blockchain.block.get_header", 12)).andReturn(null);
         replay(client);
         assertEquals(10, store1.getHeight());
-        assertTrue(chain1.add(block2));
+        assertTrue(chain1.handleBlock(11, block2));
         assertEquals(11, store1.getHeight());
         assertNotNull(store1.get(0));
         assertNull(store1.get(1));
@@ -59,9 +59,11 @@ public class StratumChainTest {
     public void add() throws ExecutionException, InterruptedException {
         Block block1 = makeBlock(params.getGenesisBlock().getHash());
         Block block2 = makeBlock(block1.getHash());
+        expect(client.call("blockchain.block.get_header", 2)).andReturn(null);
+        expect(client.call("blockchain.block.get_header", 3)).andReturn(null);
         replay(client);
-        assertTrue(chain.add(block1));
-        assertTrue(chain.add(block2));
+        assertTrue(chain.handleBlock(1, block1));
+        assertTrue(chain.handleBlock(2, block2));
         assertEquals(2, store.getHeight());
         assertEquals(params.getGenesisBlock(), store.get(0));
         assertEquals(block1, store.get(1));
@@ -77,34 +79,37 @@ public class StratumChainTest {
         Block block2 = makeBlock(block1.getHash());
         Block block2a = makeBlock(block1.getHash());
         Block block2b = makeBlock(block1b.getHash());
-        expect(client.call("blockchain.block.get_header", 2)).andReturn(
-                immediateFuture(new StratumMessage(0L, blockToJson(block2a))));
-        expect(client.call("blockchain.block.get_header", 2)).andReturn(
-                immediateFuture(new StratumMessage(0L, blockToJson(block2b))));
-        expect(client.call("blockchain.block.get_header", 1)).andReturn(
-                immediateFuture(new StratumMessage(0L, blockToJson(block1b))));
+        //immediateFuture(new StratumMessage(0L, blockToJson(block2a)))
+        expect(client.call("blockchain.block.get_header", 2)).andReturn(null);
+        expect(client.call("blockchain.block.get_header", 3)).andReturn(null);
+        expect(client.call("blockchain.block.get_header", 3)).andReturn(null);
+        expect(client.call("blockchain.block.get_header", 1)).andReturn(null);
+        expect(client.call("blockchain.block.get_header", 2)).andReturn(null);
+        expect(client.call("blockchain.block.get_header", 3)).andReturn(null);
         replay(client);
-        assertTrue(chain.add(block1));
-        assertTrue(chain.add(block2));
-        assertFalse(chain.add(block2a));
+        assertTrue(chain.handleBlock(blockToJson(1, block1))); // test JSON too
+        assertTrue(chain.handleBlock(2, block2));
+        assertTrue(chain.handleBlock(2, block2a)); // reorg length 1
         assertEquals(2, store.getHeight());
         assertEquals(store.top(), block2a);
-        assertFalse(chain.add(block2b));
+        assertFalse(chain.handleBlock(2, block2b)); // reorg length 2
+        assertTrue(chain.handleBlock(1, block1b));
         assertEquals(1, store.getHeight());
         assertEquals(store.top(), block1b);
-        assertTrue(chain.add(block2b));
+        assertTrue(chain.handleBlock(2, block2b));
         assertEquals(2, store.getHeight());
         assertEquals(store.top(), block2b);
         verify(client);
     }
 
-    private JsonNode blockToJson(Block block) {
+    private JsonNode blockToJson(long height, Block block) {
         return JsonNodeFactory.instance.objectNode()
                 .put("timestamp", block.getTimeSeconds())
                 .put("version", block.getVersion())
                 .put("bits", block.getDifficultyTarget())
                 .put("nonce", block.getNonce())
                 .put("merkle_root", block.getMerkleRoot().toString())
+                .put("block_height", height)
                 .put("prev_block_hash", block.getPrevBlockHash().toString());
     }
 

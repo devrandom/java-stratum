@@ -41,6 +41,8 @@ public class StratumClient extends AbstractExecutionThreadService {
     public static final int PING_PERIOD = 60;
     public static final String BLOCKCHAIN_HEADERS_SUBSCRIBE = "blockchain.headers.subscribe";
     public static final String BLOCKCHAIN_ADDRESS_SUBSCRIBE = "blockchain.address.subscribe";
+    public static final String BLOCKCHAIN_GET_HEADER = "blockchain.block.get_header";
+    public static final String BLOCKCHAIN_GET_CHUNK = "blockchain.block.get_chunk";
     protected static Logger logger = LoggerFactory.getLogger("StratumClient");
     private static CycleDetectingLockFactory lockFactory = CycleDetectingLockFactory.newInstance(CycleDetectingLockFactory.Policies.DISABLED);
     protected final ObjectMapper mapper;
@@ -445,7 +447,7 @@ public class StratumClient extends AbstractExecutionThreadService {
             if (message.isResult())
                 handleResult(message);
             else if (message.isMessage())
-                handleMessage(message);
+                handleMessage(message.method, message);
             else if (message.isError())
                 handleError(message);
             else {
@@ -596,17 +598,22 @@ public class StratumClient extends AbstractExecutionThreadService {
         if (call.message.method.endsWith(".subscribe")) {
             StratumMessage message1 =
                     new StratumMessage(null, call.message.method, call.message.params, message.result, mapper);
-            handleMessage(message1);
+            handleMessage(message1.method, message1);
+        }
+        if (call.message.method.equals(BLOCKCHAIN_GET_HEADER)) {
+            StratumMessage message1 =
+                    new StratumMessage(null, call.message.method, call.message.params, message.result, mapper);
+            handleMessage(BLOCKCHAIN_HEADERS_SUBSCRIBE, message1);
         }
     }
 
-    protected void handleMessage(StratumMessage message) {
-        if (!subscriptions.containsKey(message.method)) {
+    protected void handleMessage(String subscriptionMethod, StratumMessage message) {
+        if (!subscriptions.containsKey(subscriptionMethod)) {
             logger.warn("message for unknown subscription {}", message.method);
             return;
         }
         try {
-            BlockingQueue<StratumMessage> queue = subscriptions.get(message.method);
+            BlockingQueue<StratumMessage> queue = subscriptions.get(subscriptionMethod);
             queue.put(message);
         } catch (InterruptedException e) {
             logger.warn("interrupted while handling message {}", message.method);
