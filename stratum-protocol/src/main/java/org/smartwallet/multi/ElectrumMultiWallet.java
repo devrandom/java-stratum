@@ -76,6 +76,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
      */
     public ElectrumMultiWallet(SmartWallet wallet, File baseDirectory) {
         super(wallet);
+        log.info("created");
         confidenceTable = getContext().getConfidenceTable();
         wallet.addExtension(this);
         txs = Maps.newConcurrentMap();
@@ -317,15 +318,22 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         return Futures.transform(future, new Function<StratumMessage, Transaction>() {
             @Override
             public Transaction apply(StratumMessage input) {
+                tx.getConfidence().markBroadcastBy(getPeerAddress());
                 return tx;
             }
         });
     }
 
+    private PeerAddress getPeerAddress() {
+        return getPeers().get(0).theirAddr;
+    }
+
     @Override
     public void start() {
+        log.info("starting");
         startAsync();
         client.awaitRunning();
+        log.info("started");
     }
 
     void start(StratumClient mockClient, StratumChain mockChain, HeadersStore mockStore) {
@@ -380,35 +388,46 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @Override
     public void stopAsync() {
-        if (client == null) {
-            log.warn("already stopped");
-            return;
-        }
-        chain.stopAsync();
-        chain = null;
-        client.stopInBackground();
-        client = null;
-        store.close();
-        store = null;
+        throw new UnsupportedOperationException("only stop() is supported");
     }
 
     public void stop() {
         if (client == null) {
             log.warn("already stopped");
             return;
+        } else {
+            log.info("stopping");
         }
-        chain.close();
-        chain = null;
+        // Close client first, chain second, store last.
+        // This ensures that there are no callbacks into the chain after it's stopped.
+        // Client can handle calls while it's down.
         client.stopInBackground();
-        log.warn("state is {}", client.state());
-        safeAwaitTerminated();
-        client = null;
-        store.close();
-        store = null;
+        safeAwaitClientTerminated();
+        log.warn("client state is {}", client.state());
+        chain.close();
         doneWithAddressQueue();
+        store.close();
+        chain = null;
+        client = null;
+        store = null;
     }
 
-    public void safeAwaitTerminated() {
+    @Override
+    public void resetBlockchain() {
+        wallet.lock();
+        try {
+            checkState(client == null, "must be stopped to reset");
+            resetStore();
+            txs.clear();
+            isChainSynced = false;
+            isHistorySynced = false;
+            wallet.saveNow();
+        } finally {
+            wallet.unlock();
+        }
+    }
+
+    public void safeAwaitClientTerminated() {
         // Await for client to terminate
         if (client.state() == Service.State.FAILED) {
             log.error("client has previously failed", client.failureCause());
@@ -828,21 +847,6 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
         temp.close();
     }
 
-    @Override
-    public void resetBlockchain() {
-        wallet.lock();
-        try {
-            checkState(chain == null, "must be stopped to reset");
-            resetStore();
-            txs.clear();
-            isChainSynced = false;
-            isHistorySynced = false;
-            wallet.saveNow();
-        } finally {
-            wallet.unlock();
-        }
-    }
-
     void receive(Transaction tx, int height) {
         // This is also a workaround to Context issue at Fetcher
         TransactionConfidence confidence = tx.getConfidence(confidenceTable);
@@ -863,9 +867,13 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                 }
             } else {
                 log.info("unconfirmed {}", tx.getHash());
+                pendingDownload.remove(tx.getHash()).set(tx);
+                // Check if already processed pending tx.  If so, skip all processing so we don't get notified
+                if (txs.containsKey(tx.getHash()))
+                    return;
                 tx.setUpdateTime(new Date());
                 confidence.setConfidenceType(ConfidenceType.PENDING);
-                pendingDownload.remove(tx.getHash()).set(tx);
+                tx.getConfidence().markBroadcastBy(getPeerAddress());
                 txs.put(tx.getHash(), tx);
                 saveLater();
             }

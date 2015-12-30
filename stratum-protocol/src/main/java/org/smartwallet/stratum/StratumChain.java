@@ -12,8 +12,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.google.common.base.Preconditions.checkState;
-import static org.smartwallet.stratum.StratumClient.BLOCKCHAIN_GET_CHUNK;
-import static org.smartwallet.stratum.StratumClient.BLOCKCHAIN_GET_HEADER;
+import static org.smartwallet.stratum.StratumClient.*;
 
 /**
  * Created by devrandom on 2015-Nov-08.
@@ -89,13 +88,15 @@ public class StratumChain extends AbstractExecutionThreadService {
                 log.info("sentinel on queue, exiting");
                 return;
             }
-            JsonNode result = item.result != null ? item.result : item.params.get(0);
-            handleBlock(result);
+            handleBlock(item);
         }
     }
 
-    boolean handleBlock(JsonNode result) {
+    boolean handleBlock(StratumMessage item) {
+        JsonNode result = item.result != null ? item.result : item.params.get(0);
         long height = result.get("block_height").longValue();
+        if (item.method.equals(BLOCKCHAIN_HEADERS_SUBSCRIBE))
+            peerHeight = height;
         Block block = makeBlock(result);
         return handleBlock(height, block);
     }
@@ -135,7 +136,6 @@ public class StratumChain extends AbstractExecutionThreadService {
                     return false;
                 }
             } else {
-                peerHeight = height;
                 // We are not caught up, start or continue download
                 download(height - 1);
                 return false;
@@ -197,6 +197,7 @@ public class StratumChain extends AbstractExecutionThreadService {
         for (int i = start ; i < num ; i++) {
             Block block = new Block(params, Arrays.copyOfRange(data, i * Block.HEADER_SIZE, (i + 1) * Block.HEADER_SIZE));
             if (!store.add(block)) {
+                log.info("need reorg at {}", storeHeight - 1);
                 client.call("blockchain.block.get_header", storeHeight - 1); // Initiate a reorg
                 return false;
             }

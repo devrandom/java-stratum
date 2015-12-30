@@ -87,7 +87,7 @@ public class StratumChainTest {
         expect(client.call("blockchain.block.get_header", 2)).andReturn(null);
         expect(client.call("blockchain.block.get_header", 3)).andReturn(null);
         replay(client);
-        assertTrue(chain.handleBlock(blockToJson(1, block1))); // test JSON too
+        assertTrue(chain.handleBlock(new StratumMessage(111L, StratumClient.BLOCKCHAIN_GET_HEADER, blockToJson(1, block1)))); // test JSON too
         assertTrue(chain.handleBlock(2, block2));
         assertTrue(chain.handleBlock(2, block2a)); // reorg length 1
         assertEquals(2, store.getHeight());

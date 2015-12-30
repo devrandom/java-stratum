@@ -58,6 +58,13 @@ public class StratumMessage {
     }
 
     @JsonIgnore
+    StratumMessage(Long id, String method, JsonNode result) {
+        this.id = id;
+        this.method = method;
+        this.result = result;
+    }
+
+    @JsonIgnore
     public boolean isResult() {
         return id != null && result != null;
     }

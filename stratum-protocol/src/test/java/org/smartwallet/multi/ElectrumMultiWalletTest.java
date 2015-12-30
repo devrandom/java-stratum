@@ -24,6 +24,8 @@ import org.smartcolors.SmartWallet;
 import org.smartwallet.stratum.*;
 
 import java.io.*;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 
 import static org.easymock.EasyMock.expect;
@@ -62,8 +64,11 @@ public class ElectrumMultiWalletTest {
 
         control = EasyMock.createStrictControl();
         client = control.createMock(StratumClient.class);
+        expect(client.getConnectedAddresses()).andStubReturn(Lists.newArrayList(new InetSocketAddress(InetAddress.getLocalHost(), 0)));
+        expect(client.getPeerVersion()).andStubReturn("1.0");
         store = control.createMock(HeadersStore.class);
         stratumChain = control.createMock(StratumChain.class);
+        expect(stratumChain.getPeerHeight()).andStubReturn(100L);
         expect(store.get(340242)).andStubReturn(params.getGenesisBlock().cloneAsHeader());
         multiWallet = new ElectrumMultiWallet(wallet, BASE_DIRECTORY);
         multiWallet.start(client, stratumChain, store);
@@ -196,6 +201,7 @@ public class ElectrumMultiWalletTest {
 
     @Test
     public void markKeysAsUsed() throws Exception {
+        control.replay();
         DeterministicKey key1 = wallet.currentReceiveKey();
         Transaction tx1 = FakeTxBuilder.createFakeTx(params, Coin.CENT, key1.toAddress(params));
         multiWallet.addPendingDownload(tx1.getHash());
@@ -206,10 +212,12 @@ public class ElectrumMultiWalletTest {
         multiWallet.addPendingDownload(tx2.getHash());
         multiWallet.receive(tx2, 0);
         assertNotEquals(wallet.currentReceiveKey(), key2);
+        control.verify();
     }
 
     @Test
     public void markKeysAsUsedDisorder() throws Exception {
+        control.replay();
         DeterministicKey key1 = wallet.currentReceiveKey();
         String a1 = "mfsh3sGu8SzxRZXDRPMbwdCykDfdiXLTVQ";
         String a2 = "mpkchvF3Twgpd5AEmrRZM3TENT8V7Ygi8T";
@@ -226,5 +234,6 @@ public class ElectrumMultiWalletTest {
         assertNotEquals(wallet.currentReceiveKey(), key2);
         assertNotEquals(wallet.currentReceiveKey().toAddress(params), a1);
         assertNotEquals(wallet.currentReceiveKey().toAddress(params), a2);
+        control.verify();
     }
 }
