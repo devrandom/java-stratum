@@ -175,6 +175,11 @@ public class StratumChain extends AbstractExecutionThreadService {
                     }
                     if (handleChunk(item))
                         download(toHeight);
+                    else {
+                        // Ask for next block, just in case server has issues with chunk generation (jelectrum does)
+                        log.info("adding block, store height={}, id = {}", store.getHeight(), id);
+                        client.call("blockchain.block.get_header", store.getHeight() + 1);
+                    }
                 }
 
                 @Override
@@ -188,6 +193,7 @@ public class StratumChain extends AbstractExecutionThreadService {
         }
     }
 
+    // Return true if we should continue to next chunk
     private boolean handleChunk(StratumMessage item) {
         byte[] data = Utils.HEX.decode(item.result.asText());
         int num = data.length / Block.HEADER_SIZE;
@@ -202,8 +208,12 @@ public class StratumChain extends AbstractExecutionThreadService {
                 return false;
             }
         }
-        notifyHeight();
-        return true;
+        if (store.getHeight() > storeHeight) {
+            notifyHeight();
+            return true;
+        } else {
+            return false;
+        }
     }
 
     private Block makeBlock(JsonNode result) {
