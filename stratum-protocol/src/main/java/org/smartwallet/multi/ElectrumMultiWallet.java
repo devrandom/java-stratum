@@ -292,7 +292,8 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     @Override
     public void commitTx(Transaction tx) {
-        wallet.commitTx(tx);
+        addPendingDownload(tx.getHash());
+        receive(tx, 0);
     }
 
     @Override
