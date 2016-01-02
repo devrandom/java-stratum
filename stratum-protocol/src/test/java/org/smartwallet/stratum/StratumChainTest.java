@@ -32,7 +32,7 @@ public class StratumChainTest {
         expect(client.getHeadersQueue()).andStubReturn(null);
         params = NetworkParameters.fromID(NetworkParameters.ID_UNITTESTNET);
         //new CheckpointManager(params, new ByteArrayInputStream("TXT CHECKPOINTS 1\n0\n0\n".getBytes("UTF-8")))
-        store = new HeadersStore(params, file, null);
+        store = new HeadersStore(params, file, null, null);
         chain = new StratumChain(params, store, client);
     }
 
@@ -41,7 +41,7 @@ public class StratumChainTest {
         Block block1 = makeBlock(params.getGenesisBlock().getHash());
         Block block2 = makeBlock(block1.getHash());
         File file1 = File.createTempFile("stratum-chain1", ".chain");
-        HeadersStore store1 = new HeadersStore(params, file1, new StoredBlock(block1, BigInteger.ZERO, 10));
+        HeadersStore store1 = new HeadersStore(params, file1, new StoredBlock(block1, BigInteger.ZERO, 10), null);
         StratumChain chain1 = new StratumChain(params, store1, client);
         expect(client.call("blockchain.block.get_header", 12)).andReturn(null);
         replay(client);

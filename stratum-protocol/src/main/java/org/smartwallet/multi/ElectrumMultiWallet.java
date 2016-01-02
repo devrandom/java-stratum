@@ -32,6 +32,7 @@ import java.io.File;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -67,6 +68,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     private boolean isHistorySynced;
     private ListenableFuture<List<Integer>> downloadFuture;
     private CheckpointManager checkpoints;
+    private URL initialStore;
 
     /**
      * The constructor will add this object as an extension to the wallet.
@@ -99,6 +101,10 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     public void setCheckpoints(CheckpointManager checkpoints) {
         this.checkpoints = checkpoints;
+    }
+
+    public void setInitialStore(URL url) {
+        this.initialStore = url;
     }
 
     @Override
@@ -367,7 +373,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
 
     private HeadersStore makeStore() {
         StoredBlock checkpoint = getCheckpoint();
-        return new HeadersStore(wallet.getNetworkParameters(), getChainFile(), checkpoint);
+        return new HeadersStore(wallet.getNetworkParameters(), getChainFile(), checkpoint, initialStore);
     }
 
     private StoredBlock getCheckpoint() {

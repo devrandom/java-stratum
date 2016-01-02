@@ -15,6 +15,7 @@ import org.jboss.aesh.cl.CommandDefinition;
 import org.jboss.aesh.cl.converter.Converter;
 import org.jboss.aesh.cl.validator.OptionValidatorException;
 import org.jboss.aesh.console.*;
+import org.jboss.aesh.console.Console;
 import org.jboss.aesh.console.command.Command;
 import org.jboss.aesh.console.command.CommandResult;
 import org.jboss.aesh.console.command.converter.ConverterInvocation;
@@ -31,15 +32,15 @@ import org.jboss.aesh.terminal.TerminalString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.InetSocketAddress;
+import java.net.URL;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
+import java.util.zip.GZIPOutputStream;
 
 import static com.google.common.base.Throwables.propagate;
 
@@ -106,9 +107,17 @@ public class StratumCli {
         }
     }
 
-    private static InputStream openResource(String path) {
+    private static URL getResource(String path) {
         ClassLoader classloader = Thread.currentThread().getContextClassLoader();
-        return classloader.getResourceAsStream(path);
+        return classloader.getResource(path);
+    }
+
+    private static InputStream openResource(String path) {
+        try {
+            return getResource(path).openStream();
+        } catch (IOException e) {
+            throw propagate(e);
+        }
     }
 
     private void run(List<InetSocketAddress> addresses) {
@@ -121,7 +130,7 @@ public class StratumCli {
         } catch (IOException e) {
             throw propagate(e);
         }
-        store = new HeadersStore(params, new File("stratum.chain"), checkpoints.getCheckpointBefore(new Date().getTime()));
+        store = new HeadersStore(params, new File(net + "-stratum.chain"), checkpoints.getCheckpointBefore(new Date().getTime()), getResource(net + "-headers.gz"));
         chain = new StratumChain(params, store, client);
         client.startAsync();
         chain.startAsync();
@@ -141,6 +150,7 @@ public class StratumCli {
                 .command(new SubscribeHeadersCommand())
                 .command(new SetQueueCommand())
                 .command(new InfoCommand())
+                .command(new DumpChainCommand())
                 .create();
         Settings settings = new SettingsBuilder()
                 .logging(false)
@@ -200,6 +210,31 @@ public class StratumCli {
             println("height: " + store.getHeight());
             println("top: " + store.top().getHash());
             println(store.top());
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(name="dumpchain", description = "dump the header store to the resources directory")
+    public class DumpChainCommand implements Command {
+        @Override
+        public CommandResult execute(CommandInvocation commandInvocation) throws IOException, InterruptedException {
+            println("height: " + store.getHeight());
+            println("top: " + store.top().getHash());
+            println(store.top());
+            File outFile = new File("stratum-protocol/src/main/resources/" + net + "-headers.gz");
+            GZIPOutputStream out = new GZIPOutputStream(new FileOutputStream(outFile));
+            long roundHeight = store.getHeight() - (store.getHeight() % NetworkParameters.INTERVAL);
+            println("write to: " + roundHeight);
+            byte[] emptyBlock = new byte[Block.HEADER_SIZE];
+            for (int i = 0 ; i < roundHeight ; i++) {
+                Block block = store.get(i);
+                if (block != null)
+                    out.write(block.bitcoinSerialize());
+                else {
+                    out.write(emptyBlock);
+                }
+            }
+            out.close();
             return CommandResult.SUCCESS;
         }
     }

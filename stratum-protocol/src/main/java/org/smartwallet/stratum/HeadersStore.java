@@ -1,6 +1,5 @@
 package org.smartwallet.stratum;
 
-import com.google.common.base.Throwables;
 import org.bitcoinj.core.Block;
 import org.bitcoinj.core.NetworkParameters;
 import org.bitcoinj.core.StoredBlock;
@@ -8,16 +7,17 @@ import org.bitcoinj.utils.Threading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.*;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.zip.GZIPInputStream;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Throwables.propagate;
 
 /**
  * Created by devrandom on 2015-Nov-08.
@@ -32,10 +32,13 @@ public class HeadersStore {
     protected RandomAccessFile randomFile = null;
     protected ReentrantLock lock = Threading.lock("HeadersStore");
 
-    public HeadersStore(NetworkParameters params, File file, StoredBlock checkpoint) {
+    public HeadersStore(NetworkParameters params, File file, StoredBlock checkpoint, URL initialStore) {
         this.params = params;
         try {
             // Set up the backing file.
+            if (initialStore != null && !file.exists()) {
+                uncompressInitialStore(initialStore, file);
+            }
             randomFile = new RandomAccessFile(file, "rw");
             channel = randomFile.getChannel();
             fileLock = channel.tryLock();
@@ -58,9 +61,25 @@ public class HeadersStore {
                 try {
                     randomFile.close();
                 } catch (IOException e1) {
-                    Throwables.propagate(e1);
+                    propagate(e1);
                 }
-            Throwables.propagate(e);
+            propagate(e);
+        }
+    }
+
+    private void uncompressInitialStore(URL initialStore, File file) {
+        try {
+            GZIPInputStream in = new GZIPInputStream(initialStore.openStream());
+            byte[] buffer = new byte[10240];
+            FileOutputStream out = new FileOutputStream(file);
+            int len;
+            while ((len = in.read(buffer)) > 0) {
+                out.write(buffer, 0, len);
+            }
+            in.close();
+            out.close();
+        } catch (IOException e) {
+            throw propagate(e);
         }
     }
 
@@ -83,7 +102,7 @@ public class HeadersStore {
                 return null;
             return new Block(params, b.array());
         } catch (IOException e) {
-            throw Throwables.propagate(e);
+            throw propagate(e);
         } finally {
             lock.unlock();
         }
@@ -104,7 +123,7 @@ public class HeadersStore {
         try {
             return channel.size() / HEADER_SIZE - 1;
         } catch (IOException e) {
-            throw Throwables.propagate(e);
+            throw propagate(e);
         } finally {
             lock.unlock();
         }
@@ -119,7 +138,7 @@ public class HeadersStore {
                 throw new RuntimeException("trying to truncate to a block we don't have " + index);
             channel.truncate((index + 1) * HEADER_SIZE);
         } catch (IOException e) {
-            Throwables.propagate(e);
+            propagate(e);
         } finally {
             lock.unlock();
         }
@@ -135,7 +154,7 @@ public class HeadersStore {
                 channel.write(ByteBuffer.wrap(checkpoint.getHeader().cloneAsHeader().bitcoinSerialize()), index * HEADER_SIZE);
             channel.truncate((index + 1) * HEADER_SIZE);
         } catch (IOException e) {
-            Throwables.propagate(e);
+            propagate(e);
         } finally {
             lock.unlock();
         }
@@ -152,7 +171,7 @@ public class HeadersStore {
             channel.write(ByteBuffer.wrap(block.bitcoinSerialize()), channel.size());
             return true;
         } catch (Exception e) {
-            throw Throwables.propagate(e);
+            throw propagate(e);
         } finally {
             lock.unlock();
         }
@@ -185,7 +204,7 @@ public class HeadersStore {
         try {
             randomFile.close();
         } catch (IOException e) {
-            Throwables.propagate(e);
+            propagate(e);
         } finally {
             lock.unlock();
         }
