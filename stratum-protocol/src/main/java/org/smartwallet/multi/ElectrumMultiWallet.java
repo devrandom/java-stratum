@@ -147,7 +147,7 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
             while (!currentKeys.equals(oldCurrentKeys)) {
                 for (Transaction oldTx : txs.values()) {
                     doMarkKeysAsUsed(oldTx, group);
-                    notifyTransaction(oldTx); // Tell listeners about this again, in case we discovered more outputs are ours
+                    notifyTransaction(oldTx, false); // Tell listeners about this again, in case we discovered more outputs are ours
                 }
                 oldCurrentKeys = currentKeys;
                 currentKeys = getCurrentKeys(group);
@@ -857,9 +857,11 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
     void receive(Transaction tx, int height) {
         // This is also a workaround to Context issue at Fetcher
         TransactionConfidence confidence = tx.getConfidence(confidenceTable);
+        log.info("got tx {}", tx.getHashAsString());
 
         wallet.lock();
         try {
+            boolean isNewCoin = !txs.containsKey(tx.getHash());
             if (height > 0) {
                 Block block = store.get(height);
                 if (block == null) {
@@ -871,36 +873,36 @@ public class ElectrumMultiWallet extends SmartMultiWallet implements WalletExten
                     confidence.setAppearedAtChainHeight(height);
                     txs.put(tx.getHash(), tx);
                     saveLater();
+                    notifyTransaction(tx, isNewCoin);
                 }
             } else {
                 log.info("unconfirmed {}", tx.getHash());
                 pendingDownload.remove(tx.getHash()).set(tx);
-                // Check if already processed pending tx.  If so, skip all processing so we don't get notified
-                if (txs.containsKey(tx.getHash()))
-                    return;
-                tx.setUpdateTime(new Date());
-                confidence.setConfidenceType(ConfidenceType.PENDING);
-                tx.getConfidence().markBroadcastBy(getPeerAddress());
-                txs.put(tx.getHash(), tx);
-                saveLater();
+                // Check if already processed pending tx.  If so, skip all processing.
+                if (isNewCoin) {
+                    tx.setUpdateTime(new Date());
+                    confidence.setConfidenceType(ConfidenceType.PENDING);
+                    tx.getConfidence().markBroadcastBy(getPeerAddress());
+                    txs.put(tx.getHash(), tx);
+                    saveLater();
+                }
+                notifyTransaction(tx, isNewCoin);
             }
         } finally {
             wallet.unlock();
         }
-        log.info("got tx {}", tx.getHashAsString());
         markKeysAsUsed(tx);
-        notifyTransaction(tx);
     }
 
-    private void notifyTransaction(final Transaction tx) {
+    private void notifyTransaction(final Transaction tx, final boolean isNewCoin) {
         for (final ListenerRegistration<MultiWalletEventListener> registration : eventListeners) {
             if (registration.executor == Threading.SAME_THREAD) {
-                registration.listener.onTransaction(this, tx);
+                registration.listener.onTransaction(this, tx, isNewCoin);
             } else {
                 registration.executor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        registration.listener.onTransaction(ElectrumMultiWallet.this, tx);
+                        registration.listener.onTransaction(ElectrumMultiWallet.this, tx, isNewCoin);
                     }
                 });
             }
